@@ -46,7 +46,7 @@
     "test": "vitest run",
     "test:browser": "playwright test",
     "format": "prettier --write \"**/*.{css,ts,tsx,json,md}\"",
-    "check": "pnpm typecheck && pnpm lint && pnpm test && pnpm build",
+    "check": "pnpm typecheck && pnpm lint && pnpm test && pnpm build && pnpm --filter @openrails/billing check",
     "prepublishOnly": "pnpm check"
   },
   "publishConfig": {
