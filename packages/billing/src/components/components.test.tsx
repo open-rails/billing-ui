@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
 
+import { BillingError } from "../core/errors"
 import { formatMoney, parseCurrencyRegistry } from "../core/money"
 import {
   checkoutSessionSchema,
@@ -14,8 +15,8 @@ import currencies from "../test/fixtures/wire/currencies.json"
 import subscriptionFixture from "../test/fixtures/wire/subscription.json"
 import { CheckoutView } from "./checkout-view"
 import { InvoiceList } from "./invoice-list"
-import { PaymentRecovery } from "./payment-recovery"
 import { SavedMethods } from "./saved-methods"
+import { SubscriptionRecovery } from "./subscription-recovery"
 import { SubscriptionState } from "./subscription-state"
 
 const registry = parseCurrencyRegistry(currencies)
@@ -65,8 +66,14 @@ const invoice = invoiceSchema.parse({
   status: "past_due",
   collection_method: "charge_automatically",
   collection_failure_count: 1,
-  last_collection_failure_code: "insufficient_funds",
-  next_collection_attempt_at: "2026-09-19T00:00:00Z",
+  recovery: {
+    retryable: true,
+    attempt_count: 1,
+    failure_category: "insufficient_funds",
+    last_failure_code: "201",
+    next_attempt_at: "2026-09-19T00:00:00Z",
+    compatible_payment_method_ids: ["pm_dddddddd-dddd-4ddd-8ddd-dddddddddddd"],
+  },
   created_at: "2026-09-01T00:00:00Z",
 })
 
@@ -132,47 +139,207 @@ describe("SubscriptionState", () => {
   })
 })
 
-describe("PaymentRecovery", () => {
-  it("shows dunning facts and the retry action only with the server flag", () => {
-    const pastDue = {
-      ...subscription,
-      status: "past_due",
-      retry_attempts: 2,
-      last_retry_at: "2026-09-15T00:00:00Z",
-      next_retry_at: "2026-09-19T00:00:00Z",
-      grace_ends_at: "2026-09-25T00:00:00Z",
-      payments: [
-        { ...subscription.payments![0], status: "failed", amount: "9990000" },
-      ],
-    }
+const operationId = "01999999-9999-7999-8999-999999999999"
+
+function declined(extra: Record<string, unknown> = {}) {
+  return BillingError.fromResponse("POST", "https://b/x", 402, {
+    error: {
+      type: "card_error",
+      code: "card_declined",
+      message: "Your card has insufficient funds.",
+      metadata: {
+        decline_reason: "insufficient_funds",
+        failure_code: "201",
+        retryable: true,
+        attempt_count: 3,
+        ...extra,
+      },
+    },
+  })
+}
+
+function refused(code: string, status = 409) {
+  return BillingError.fromResponse("POST", "https://b/x", status, {
+    error: { type: "invalid_request_error", code, message: "diagnostic text" },
+  })
+}
+
+describe("SubscriptionRecovery", () => {
+  const pastDue = {
+    ...subscription,
+    status: "past_due",
+    grace_ends_at: "2026-09-25T00:00:00Z",
+    payments: [
+      { ...subscription.payments![0], status: "failed", amount: "9990000" },
+    ],
+    recovery: {
+      retryable: true,
+      attempt_count: 2,
+      failure_category: "insufficient_funds",
+      last_failure_code: "201",
+      last_failed_at: "2026-09-15T00:00:00Z",
+      next_attempt_at: "2026-09-19T00:00:00Z",
+      compatible_payment_method_ids: [subscription.payment_method_id!],
+    },
+  }
+
+  it("shows the server's recovery facts and offers retry only when retryable", () => {
     const onRetryNow = vi.fn()
     const { rerender, container } = render(
-      <PaymentRecovery
+      <SubscriptionRecovery
         subscription={pastDue}
         money={money}
         formatDate={formatDate}
         onRetryNow={onRetryNow}
+        labels={{
+          recovery: {
+            failureCategory: { insufficient_funds: "Insufficient funds" },
+          },
+        }}
       />
     )
     expect(screen.getByText("$9.99")).toBeInTheDocument()
     expect(screen.getByText("2")).toBeInTheDocument()
+    expect(screen.getByText("Insufficient funds")).toHaveAttribute(
+      "data-failure-code",
+      "201"
+    )
     expect(screen.getByText("2026-09-19")).toBeInTheDocument()
     expect(screen.getByText("2026-09-25")).toBeInTheDocument()
-    expect(
-      screen.queryByRole("button", { name: "Retry payment now" })
-    ).toBeNull()
-    expect(container.firstChild).toHaveAttribute("data-retryable", "false")
+    expect(container.firstChild).toHaveAttribute("data-retryable", "true")
+    fireEvent.click(screen.getByRole("button", { name: "Retry payment now" }))
+    expect(onRetryNow).toHaveBeenCalledWith(pastDue)
 
+    // Not retryable: the server's blocked reason is shown, the control is not.
     rerender(
-      <PaymentRecovery
-        subscription={pastDue}
+      <SubscriptionRecovery
+        subscription={{
+          ...pastDue,
+          recovery: {
+            ...pastDue.recovery,
+            retryable: false,
+            blocked_reason: "rail_unsupported",
+          },
+        }}
         money={money}
-        retryable
         onRetryNow={onRetryNow}
       />
     )
-    fireEvent.click(screen.getByRole("button", { name: "Retry payment now" }))
-    expect(onRetryNow).toHaveBeenCalledWith(pastDue)
+    expect(
+      screen.queryByRole("button", { name: "Retry payment now" })
+    ).toBeNull()
+    expect(
+      screen.getByText("This payment is managed by the payment provider.")
+    ).toHaveAttribute("data-blocked-reason", "rail_unsupported")
+
+    // No recovery block (non-self shape): nothing is inferred, no control.
+    rerender(
+      <SubscriptionRecovery
+        subscription={{ ...pastDue, recovery: undefined }}
+        money={money}
+        onRetryNow={onRetryNow}
+      />
+    )
+    expect(
+      screen.queryByRole("button", { name: "Retry payment now" })
+    ).toBeNull()
+  })
+
+  it("shows confirming while an operation is unresolved and hides retry", () => {
+    const { rerender } = render(
+      <SubscriptionRecovery
+        subscription={pastDue}
+        money={money}
+        onRetryNow={vi.fn()}
+        operation={{ id: operationId, status: "unknown_needs_verify" }}
+      />
+    )
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Confirming your payment"
+    )
+    expect(
+      screen.queryByRole("button", { name: "Retry payment now" })
+    ).toBeNull()
+
+    rerender(
+      <SubscriptionRecovery
+        subscription={{
+          ...pastDue,
+          recovery: {
+            ...pastDue.recovery,
+            retryable: false,
+            blocked_reason: "in_progress",
+            operation: { id: operationId, status: "in_flight" },
+          },
+        }}
+        money={money}
+        onRetryNow={vi.fn()}
+      />
+    )
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Confirming your payment"
+    )
+  })
+
+  it("displays a 402 decline and each 409 refusal by code", () => {
+    const { rerender } = render(
+      <SubscriptionRecovery
+        subscription={pastDue}
+        money={money}
+        error={declined()}
+        labels={{
+          recovery: {
+            failureCategory: { insufficient_funds: "(insufficient funds)" },
+          },
+        }}
+      />
+    )
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Your payment was declined. (insufficient funds)"
+    )
+    expect(screen.getByRole("alert")).toHaveAttribute(
+      "data-decline-reason",
+      "insufficient_funds"
+    )
+
+    for (const code of [
+      "payment_recovery_rail_unsupported",
+      "subscription_not_retryable",
+      "subscription_retry_in_progress",
+      "subscription_retry_outcome_unknown",
+    ]) {
+      rerender(
+        <SubscriptionRecovery
+          subscription={pastDue}
+          money={money}
+          error={refused(code)}
+        />
+      )
+      expect(screen.getByRole("alert"), code).toHaveAttribute("data-code", code)
+      expect(screen.getByRole("alert").textContent).not.toContain(
+        "diagnostic text"
+      )
+    }
+    rerender(
+      <SubscriptionRecovery
+        subscription={pastDue}
+        money={money}
+        error={refused("collection_payment_method_invalid", 400)}
+      />
+    )
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "That payment method cannot be used"
+    )
+    rerender(
+      <SubscriptionRecovery
+        subscription={pastDue}
+        money={money}
+        error={refused("brand_new_code")}
+      />
+    )
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "The payment could not be attempted."
+    )
   })
 })
 
@@ -227,15 +394,14 @@ describe("SavedMethods", () => {
 })
 
 describe("InvoiceList", () => {
-  it("renders exact JPY money, collection state and pay-now only when the host allows", () => {
+  it("renders exact JPY money and pay-now only when recovery.retryable", () => {
     const onPayNow = vi.fn()
-    render(
+    const { rerender } = render(
       <InvoiceList
         invoices={[invoice]}
         money={money}
         formatDate={formatDate}
         onPayNow={onPayNow}
-        canPayNow={(i) => i.status === "past_due"}
         labels={{ status: { past_due: "Past due" } }}
       />
     )
@@ -243,12 +409,78 @@ describe("InvoiceList", () => {
     expect(screen.getByText("Past due")).toBeInTheDocument()
     expect(screen.getAllByText("¥1,234")).toHaveLength(2)
     expect(screen.getByText("2026-09-19")).toBeInTheDocument()
-    expect(screen.getByText("1")).toHaveAttribute(
+    expect(screen.getByText("insufficient_funds")).toHaveAttribute(
       "data-failure-code",
-      "insufficient_funds"
+      "201"
     )
     fireEvent.click(screen.getByRole("button", { name: "Pay now" }))
     expect(onPayNow).toHaveBeenCalledWith(invoice)
+
+    rerender(
+      <InvoiceList
+        invoices={[
+          {
+            ...invoice,
+            recovery: {
+              ...invoice.recovery!,
+              retryable: false,
+              blocked_reason: "no_compatible_payment_method",
+            },
+          },
+        ]}
+        money={money}
+        onPayNow={onPayNow}
+      />
+    )
+    expect(screen.queryByRole("button", { name: "Pay now" })).toBeNull()
+    expect(
+      screen.getByText("Add a payment method to pay now.")
+    ).toBeInTheDocument()
+  })
+
+  it("tracks the active invoice's 202 operation and last error", () => {
+    const { rerender } = render(
+      <InvoiceList
+        invoices={[invoice]}
+        money={money}
+        onPayNow={vi.fn()}
+        active={{
+          invoiceId: invoice.id,
+          operation: { id: operationId, status: "pending" },
+        }}
+      />
+    )
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Confirming your payment"
+    )
+    expect(screen.queryByRole("button", { name: "Pay now" })).toBeNull()
+
+    rerender(
+      <InvoiceList
+        invoices={[invoice]}
+        money={money}
+        onPayNow={vi.fn()}
+        active={{
+          invoiceId: invoice.id,
+          error: refused("invoice_retry_idempotency_conflict"),
+        }}
+      />
+    )
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "already used for a different payment"
+    )
+    expect(screen.getByRole("button", { name: "Pay now" })).toBeInTheDocument()
+
+    rerender(
+      <InvoiceList
+        invoices={[invoice]}
+        money={money}
+        active={{ invoiceId: invoice.id, error: declined() }}
+      />
+    )
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Your payment was declined."
+    )
   })
 
   it("shows the empty state", () => {

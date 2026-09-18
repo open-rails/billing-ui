@@ -2,3 +2,4 @@ dist
 node_modules
 src/components/ui
 packages/*/dist
+packages/billing/src/test/fixtures/wire

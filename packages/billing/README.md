@@ -60,9 +60,20 @@ the request is replayed with the same `Idempotency-Key`. Cross-origin
 `unreadNotificationCount`/`markNotificationRead`, `createCheckoutSession`/
 `getCheckoutSession`/`confirmCheckoutSession`. Mutations return
 `Accepted<T>` (`status`, `data`, `idempotencyKey`); 202/204 outcomes are
-named (`"queued"`, `outcome: "pending" | "completed"`). `payInvoiceNow` and
-`retrySubscriptionNow` are typed against the #809 contract and pending its
-core PR.
+named (`"queued"`, `outcome: "pending" | "completed"`).
+
+Customer payment recovery (#809): `payInvoiceNow(invoiceId,
+{payment_method_id})`, `retrySubscriptionNow(id, {payment_method_id?})` and
+`listInvoicePayments(invoiceId)`. Each action sends one `Idempotency-Key`
+(1–255 bytes) and is never retried. 200 is terminal; 202 returns the same
+`{invoice|subscription, attempt|payment, operation, replayed}` with an
+unresolved `operation` — watch it, never resend. A provider refusal is a 402
+`BillingError` (`recoveryDeclineOf(error)` reads the recorded attempt); a
+refusal to attempt is a coded 409 (`RECOVERY_REFUSAL_CODES`). Every `/v1/me`
+invoice and subscription carries OpenRails' `recovery` block (`retryable`,
+`blocked_reason`, `next_attempt_at`, `attempt_count`, `failure_category`,
+`compatible_payment_method_ids`, `operation`); hosts read it instead of
+re-deriving rail or dunning policy.
 
 ## `react`
 
@@ -75,16 +86,22 @@ Read hooks (`useBillingStatus`, `useSubscriptions`, `useSubscription`,
 subject. Mutation hooks invalidate dependent keys only after an accepted
 response. `useSubscriptionSettlement`/`useInvoiceSettlement`/
 `usePaymentMethodSettlement` poll after a 202 until a predicate holds, with
-a timeout.
+a timeout; `useInvoiceRecoverySettlement(invoiceId, operation)` and
+`useSubscriptionRecoverySettlement(id, operation)` poll a #809 202 by the
+resource's `recovery.operation` and invalidate the invoice, its `/payments`
+attempts and the status once it resolves. `usePayInvoiceNow`,
+`useRetrySubscriptionNow` and `useInvoicePayments` wrap the recovery calls.
 
 ## `components`
 
 Controlled, unstyled views with `orb-*` class hooks, `data-*` state and
 replaceable `labels`: `InvoiceList`, `SavedMethods`, `SubscriptionState`,
-`PaymentRecovery`, `CheckoutView`. They render DTO flags (`resumable`,
-`cancel_scheduled`, `cancel_mode`, `next_retry_at`, `health`,
-`collection_default_currencies`) and never decide eligibility; pay-now and
-retry-now controls appear only when the host passes the server's flag.
+`SubscriptionRecovery`, `CheckoutView`, and `RecoveryFacts`. They render DTO
+flags (`resumable`, `cancel_scheduled`, `cancel_mode`, `health`,
+`collection_default_currencies`, and the `recovery` block) and never decide
+eligibility: pay-now / retry-now controls appear only when the server reports
+`recovery.retryable` and no operation is unresolved; `blocked_reason`, 402
+declines and 409 codes map to replaceable labels.
 
 ## `checkout`
 

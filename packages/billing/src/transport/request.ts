@@ -111,6 +111,12 @@ export function createIdempotencyKey(): string {
   return crypto.randomUUID()
 }
 
+// OpenRails accepts an Idempotency-Key of 1–255 bytes.
+export function isValidIdempotencyKey(key: string): boolean {
+  const bytes = new TextEncoder().encode(key.trim()).length
+  return bytes >= 1 && bytes <= 255
+}
+
 export function parseRetryAfter(
   value: string | null,
   now: number
@@ -349,6 +355,8 @@ export function createTransport(options: TransportOptions): Transport {
     const idempotencyKey = mutation
       ? (spec.idempotencyKey ?? newKey())
       : undefined
+    if (idempotencyKey !== undefined && !isValidIdempotencyKey(idempotencyKey))
+      throw new Error("billing: Idempotency-Key must be 1–255 bytes")
     const attempts = mutation ? 1 : Math.max(1, retry.attempts)
     let credential = await options.auth.credential()
     let refreshed = false

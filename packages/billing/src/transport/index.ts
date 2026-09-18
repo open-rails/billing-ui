@@ -21,6 +21,7 @@ export {
   createTransport,
   isAbortError,
   isMutation,
+  isValidIdempotencyKey,
   normalizeBaseUrl,
   parseRetryAfter,
   type HttpMethod,

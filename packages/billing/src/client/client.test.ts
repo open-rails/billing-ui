@@ -1,12 +1,20 @@
 import { describe, expect, it } from "vitest"
 
 import { BillingError } from "../core/errors"
+import { RECOVERY_REFUSAL_CODES, recoveryDeclineOf } from "../core/recovery"
 import billingStatus from "../test/fixtures/wire/billing_status.json"
 import currencies from "../test/fixtures/wire/currencies.json"
+import invoicePayNow from "../test/fixtures/wire/invoice_pay_now.json"
 import notification from "../test/fixtures/wire/notification.json"
 import payment from "../test/fixtures/wire/payment.json"
 import subscription from "../test/fixtures/wire/subscription.json"
-import { errorEnvelope, fixtureServer, json } from "../test/server"
+import subscriptionRetryNow from "../test/fixtures/wire/subscription_retry_now.json"
+import {
+  NetworkFailure,
+  errorEnvelope,
+  fixtureServer,
+  json,
+} from "../test/server"
 import { bearerAuth } from "../transport/auth"
 import { createTransport } from "../transport/request"
 import { createBillingClient } from "./index"
@@ -333,22 +341,216 @@ describe("BillingClient mutations", () => {
     expect(error.code).toBe("card_declined")
     expect(error.metadata?.decline_reason).toBe("insufficient_funds")
   })
+})
 
-  it("types the pending #809 actions against the provisional contract", async () => {
+describe("#809 customer payment recovery", () => {
+  const invoiceId = invoicePayNow.invoice.id
+  const payNowPath = `/v1/me/invoices/${invoiceId}/pay-now`
+  const retryNowPath = `/v1/me/subscriptions/${subId}/retry-now`
+  const operationId = invoicePayNow.operation.id
+  const settled = {
+    ...invoicePayNow,
+    invoice: {
+      ...invoicePayNow.invoice,
+      status: "paid",
+      amount_paid: invoicePayNow.invoice.amount_due,
+      amount_due: "0",
+      recovery: {
+        retryable: false,
+        blocked_reason: "not_due",
+        attempt_count: 3,
+        compatible_payment_method_ids: [pmId],
+      },
+    },
+    attempt: {
+      ...invoicePayNow.attempt,
+      status: "settled",
+      settled_at: "2026-09-16T00:00:01Z",
+    },
+    operation: { id: operationId, status: "succeeded" },
+  }
+
+  it("pay-now: 200 terminal result with the key sent once", async () => {
     const { server, client } = setup()
-    server.route("POST", `/v1/me/invoices/${invoice.id}/pay-now`, () =>
-      json({ status: "queued" }, 202)
-    )
-    server.route("POST", `/v1/me/subscriptions/${subId}/retry-now`, () =>
-      json({ status: "succeeded", subscription })
-    )
-    const pay = await client.payInvoiceNow(invoice.id, {
+    server.route("POST", payNowPath, () => json(settled))
+    const result = await client.payInvoiceNow(invoiceId, {
       payment_method_id: pmId,
     })
-    expect(pay.status).toBe(202)
-    expect(pay.data.status).toBe("queued")
+    expect(result.status).toBe(200)
+    expect(result.idempotencyKey).toBe("idem_1")
+    expect(result.data.invoice.status).toBe("paid")
+    expect(result.data.attempt.status).toBe("settled")
+    expect(result.data.operation.status).toBe("succeeded")
+    expect(server.requests).toHaveLength(1)
+    expect(server.requests[0].headers.get("Idempotency-Key")).toBe("idem_1")
     expect(server.requests[0].body).toEqual({ payment_method_id: pmId })
-    const retry = await client.retrySubscriptionNow(subId)
-    expect(retry.data.status).toBe("succeeded")
+  })
+
+  it("pay-now: 202 carries the unresolved operation (canonical fixture)", async () => {
+    const { server, client } = setup()
+    server.route("POST", payNowPath, () => json(invoicePayNow, 202))
+    const result = await client.payInvoiceNow(invoiceId, {
+      payment_method_id: pmId,
+    })
+    expect(result.status).toBe(202)
+    expect(result.data.operation).toEqual({
+      id: operationId,
+      status: "unknown_needs_verify",
+    })
+    expect(result.data.invoice.recovery?.operation?.id).toBe(operationId)
+  })
+
+  it("retry-now: optional body, 200 with the renewed subscription and payment", async () => {
+    const { server, client } = setup()
+    server.route("POST", retryNowPath, () => json(subscriptionRetryNow))
+    const plain = await client.retrySubscriptionNow(subId)
+    expect(plain.data.operation.status).toBe("succeeded")
+    expect(plain.data.payment?.id).toBe(
+      "pay_eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+    )
+    expect(server.requests[0].body).toEqual({})
+    await client.retrySubscriptionNow(
+      subId,
+      { payment_method_id: pmId },
+      { idempotencyKey: "idem_host" }
+    )
+    expect(server.requests[1].body).toEqual({ payment_method_id: pmId })
+    expect(server.requests[1].headers.get("Idempotency-Key")).toBe("idem_host")
+  })
+
+  it("reads the invoice attempt history behind a 202", async () => {
+    const { server, client } = setup()
+    server.route("GET", `/v1/me/invoices/${invoiceId}/payments`, () =>
+      json({
+        object: "list",
+        data: [settled.attempt, invoicePayNow.attempt],
+        total: 2,
+        limit: 20,
+        offset: 0,
+        has_more: false,
+      })
+    )
+    const page = await client.listInvoicePayments(invoiceId, { limit: 20 })
+    expect(page.data.map((a) => a.status)).toEqual(["settled", "attempted"])
+    expect(server.requests[0].query.get("limit")).toBe("20")
+  })
+
+  it("402 card_declined exposes the recorded attempt in typed metadata", async () => {
+    const { server, client } = setup()
+    const metadata = {
+      decline_reason: "insufficient_funds",
+      failure_code: "201",
+      attempt_id: invoicePayNow.attempt.id,
+      invoice_id: invoiceId,
+      operation_id: operationId,
+      replayed: false,
+      retryable: true,
+      attempt_count: 3,
+      next_attempt_at: "2026-09-19T00:00:00Z",
+    }
+    server.route("POST", payNowPath, () =>
+      errorEnvelope(402, "card_declined", { metadata })
+    )
+    const error = await client
+      .payInvoiceNow(invoiceId, { payment_method_id: pmId })
+      .catch((e) => e)
+    expect(error.isPaymentRefused).toBe(true)
+    expect(recoveryDeclineOf(error)).toEqual(metadata)
+    expect(recoveryDeclineOf(new Error("x"))).toBeNull()
+    expect(server.requests).toHaveLength(1)
+  })
+
+  it("surfaces every 409 refusal code, 400 and 404 typed and without a retry", async () => {
+    const { server, client } = setup()
+    let code = ""
+    server.route("POST", payNowPath, () => errorEnvelope(409, code))
+    for (code of RECOVERY_REFUSAL_CODES) {
+      const error = await client
+        .payInvoiceNow(invoiceId, { payment_method_id: pmId })
+        .catch((e) => e)
+      expect(error, code).toBeInstanceOf(BillingError)
+      expect(error.status).toBe(409)
+      expect(error.code).toBe(code)
+      expect(error.isConflict).toBe(true)
+    }
+    expect(server.requests).toHaveLength(RECOVERY_REFUSAL_CODES.length)
+    const unknown = await (async () => {
+      code = "subscription_retry_outcome_unknown"
+      return client
+        .payInvoiceNow(invoiceId, { payment_method_id: pmId })
+        .catch((e) => e)
+    })()
+    expect(unknown.isOutcomeUnknown).toBe(true)
+
+    server.route("POST", retryNowPath, () =>
+      errorEnvelope(400, "collection_payment_method_invalid")
+    )
+    const invalid = await client
+      .retrySubscriptionNow(subId, { payment_method_id: pmId })
+      .catch((e) => e)
+    expect(invalid.code).toBe("collection_payment_method_invalid")
+
+    server.route(
+      "POST",
+      `/v1/me/invoices/99999999-9999-4999-8999-999999999990/pay-now`,
+      () => errorEnvelope(404, "resource_not_found")
+    )
+    const notMine = await client
+      .payInvoiceNow("99999999-9999-4999-8999-999999999990", {
+        payment_method_id: pmId,
+      })
+      .catch((e) => e)
+    expect(notMine.isNotFound).toBe(true)
+  })
+
+  it("never auto-retries a pay-now on a lost response or a 5xx", async () => {
+    const { server, client } = setup()
+    server.route("POST", payNowPath, () => {
+      throw new NetworkFailure()
+    })
+    const lost = await client
+      .payInvoiceNow(invoiceId, { payment_method_id: pmId })
+      .catch((e) => e)
+    expect(lost.isOutcomeUnknown).toBe(true)
+    server.route("POST", retryNowPath, () =>
+      errorEnvelope(503, "service_unavailable")
+    )
+    await expect(client.retrySubscriptionNow(subId)).rejects.toMatchObject({
+      status: 503,
+    })
+    expect(server.requests.map((r) => r.path)).toEqual([
+      payNowPath,
+      retryNowPath,
+    ])
+  })
+
+  it("refuses a malformed request or host key before anything is sent", async () => {
+    const { server, client } = setup()
+    await expect(
+      client.payInvoiceNow(invoiceId, {
+        payment_method_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd" as never,
+      })
+    ).rejects.toThrow()
+    await expect(
+      client.retrySubscriptionNow(subId, {
+        payment_method_id: pmId,
+        amount: "1",
+      } as never)
+    ).rejects.toThrow()
+    await expect(
+      client.payInvoiceNow(
+        invoiceId,
+        { payment_method_id: pmId },
+        { idempotencyKey: "" }
+      )
+    ).rejects.toThrow(/1–255 bytes/)
+    await expect(
+      client.payInvoiceNow(
+        invoiceId,
+        { payment_method_id: pmId },
+        { idempotencyKey: "k".repeat(256) }
+      )
+    ).rejects.toThrow(/1–255 bytes/)
+    expect(server.requests).toHaveLength(0)
   })
 })

@@ -12,6 +12,11 @@ import { useEffect, useRef, useState } from "react"
 
 import type { BillingError } from "../core/errors"
 import type { SubscriptionID } from "../core/ids"
+import {
+  isOperationUnresolved,
+  type PaymentOperation,
+  type PaymentRecovery,
+} from "../core/recovery"
 import type { Invoice, PaymentMethod, Subscription } from "../core/schemas"
 import { useBilling } from "./context"
 
@@ -171,5 +176,64 @@ export function usePaymentMethodSettlement(
     settled,
     invalidates: [keys.paymentMethods.root, keys.subscriptions.root],
     ...options,
+  })
+}
+
+// A #809 operation is settled once the resource no longer reports it as its
+// unresolved recovery.operation (it resolved, or a newer one replaced it).
+function operationSettled(
+  recovery: PaymentRecovery | null | undefined,
+  operation: PaymentOperation
+): boolean {
+  const live = recovery?.operation
+  return !live || live.id !== operation.id || !isOperationUnresolved(live)
+}
+
+// After a 202 pay-now, poll GET /v1/me/invoices/{id} while `operation` is
+// unresolved; when it settles, the invoice, its /payments attempts and the
+// status are invalidated so the outcome is read, never inferred. Pass the
+// 202's operation (or null to stay idle). Nothing is ever resent.
+export function useInvoiceRecoverySettlement(
+  invoiceId: string | null | undefined,
+  operation: PaymentOperation | null | undefined,
+  options: Pick<PollOptions<Invoice>, "intervalMs" | "timeoutMs"> = {}
+): PollResult<Invoice> {
+  const { client, keys } = useBilling()
+  const watching =
+    !!invoiceId && !!operation && isOperationUnresolved(operation)
+  return usePolledQuery<Invoice>({
+    queryKey: keys.invoices.detail(invoiceId ?? ""),
+    queryFn: (signal) => client.getInvoice(invoiceId as string, { signal }),
+    settled: (invoice) =>
+      !operation || operationSettled(invoice.recovery, operation),
+    invalidates: [keys.invoices.root, keys.payments.root, keys.status],
+    ...options,
+    enabled: watching,
+  })
+}
+
+// After a 202 retry-now, poll GET /v1/me/subscriptions/{id} the same way.
+export function useSubscriptionRecoverySettlement(
+  subscriptionId: SubscriptionID | null | undefined,
+  operation: PaymentOperation | null | undefined,
+  options: Pick<PollOptions<Subscription>, "intervalMs" | "timeoutMs"> = {}
+): PollResult<Subscription> {
+  const { client, keys } = useBilling()
+  const watching =
+    !!subscriptionId && !!operation && isOperationUnresolved(operation)
+  return usePolledQuery<Subscription>({
+    queryKey: keys.subscriptions.detail(subscriptionId ?? ""),
+    queryFn: (signal) =>
+      client.getSubscription(subscriptionId as SubscriptionID, { signal }),
+    settled: (subscription) =>
+      !operation || operationSettled(subscription.recovery, operation),
+    invalidates: [
+      keys.subscriptions.root,
+      keys.status,
+      keys.entitlements(),
+      keys.payments.root,
+    ],
+    ...options,
+    enabled: watching,
   })
 }

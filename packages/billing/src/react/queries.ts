@@ -26,6 +26,7 @@ import type {
   CheckoutSession,
   Invoice,
   InvoiceListResponse,
+  InvoicePaymentAttempt,
   Notification,
   Page,
   Payment,
@@ -190,6 +191,20 @@ export function useInvoice(
   return useScopedQuery(
     keys.invoices.detail(id ?? ""),
     (signal) => client.getInvoice(id as string, { signal }),
+    scope.subject !== null && !!id,
+    overrides
+  )
+}
+
+export function useInvoicePayments(
+  id: string | null | undefined,
+  params: PageParams = {},
+  overrides?: QueryOverrides<Page<InvoicePaymentAttempt>>
+): UseQueryResult<Page<InvoicePaymentAttempt>, BillingError> {
+  const { client, keys, scope } = useBilling()
+  return useScopedQuery(
+    keys.invoices.payments(id ?? "", params),
+    (signal) => client.listInvoicePayments(id as string, params, { signal }),
     scope.subject !== null && !!id,
     overrides
   )

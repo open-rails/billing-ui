@@ -25,13 +25,14 @@ import type {
   CreateCheckoutSessionRequest,
   CreatePaymentMethodRequest,
   MutationOutcome,
+  InvoicePayNowResult,
   PayInvoiceNowRequest,
-  PayInvoiceNowResult,
   PaymentMethod,
   QueuedResult,
-  RetrySubscriptionNowResult,
+  RetrySubscriptionNowRequest,
   SetCollectionPaymentMethodRequest,
   Subscription,
+  SubscriptionRetryNowResult,
   TierChangeResponse,
   UpdatePaymentMethodRequest,
 } from "../core/schemas"
@@ -243,31 +244,42 @@ export function useConfirmCheckoutSession(
   )
 }
 
-// #809 — PENDING the core contract; see client/index.ts.
+// #809 customer payment recovery. One Idempotency-Key per call, never
+// retried. The invoice/subscription keys are invalidated on 200 and on 202
+// (the reads then show recovery.operation); follow a 202 with
+// useInvoiceRecoverySettlement / useSubscriptionRecoverySettlement.
 export function usePayInvoiceNow(
   overrides?: MutationOverrides<
-    Accepted<PayInvoiceNowResult>,
+    Accepted<InvoicePayNowResult>,
     { invoiceId: string; request: PayInvoiceNowRequest } & MutationOptions
   >
 ) {
   return useBillingMutation(
     ({ client }, { invoiceId, request, ...options }) =>
       client.payInvoiceNow(invoiceId, request, options),
-    ({ keys }) => [keys.invoices.root, keys.payments.root, keys.status],
+    ({ keys }) => [keys.invoices.root, keys.status],
     overrides
   )
 }
 
 export function useRetrySubscriptionNow(
   overrides?: MutationOverrides<
-    Accepted<RetrySubscriptionNowResult>,
-    { id: SubscriptionID } & MutationOptions
+    Accepted<SubscriptionRetryNowResult>,
+    {
+      id: SubscriptionID
+      request?: RetrySubscriptionNowRequest
+    } & MutationOptions
   >
 ) {
   return useBillingMutation(
-    ({ client }, { id, ...options }) =>
-      client.retrySubscriptionNow(id, options),
-    ({ keys }) => [keys.subscriptions.root, keys.status, keys.payments.root],
+    ({ client }, { id, request, ...options }) =>
+      client.retrySubscriptionNow(id, request, options),
+    ({ keys }) => [
+      keys.subscriptions.root,
+      keys.status,
+      keys.entitlements(),
+      keys.payments.root,
+    ],
     overrides
   )
 }

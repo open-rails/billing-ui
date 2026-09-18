@@ -13,10 +13,12 @@ First cut of the shared direct-browser billing package (tracker #1011).
   `Retry-After`, `credentials: omit` by default.
 - `client`: status/entitlements, subscriptions (cancel, resume, payment
   method, tier change), payment methods, payments, invoices, notifications,
-  checkout sessions; `payInvoiceNow`/`retrySubscriptionNow` typed against the
-  #809 contract, pending its core PR.
+  checkout sessions; #809 `payInvoiceNow`/`retrySubscriptionNow`/
+  `listInvoicePayments` on the exact core contract (openrails `dca35f2f3`),
+  the `recovery` block on invoices and subscriptions, typed 402 declines and
+  409 refusal codes.
 - `react`: provider, scoped query keys, read and mutation hooks on the host's
-  QueryClient, 202 settlement polling.
+  QueryClient, 202 settlement polling (operation-driven for #809).
 - `components`: neutral `InvoiceList`, `SavedMethods`, `SubscriptionState`,
-  `PaymentRecovery`, `CheckoutView`.
+  `SubscriptionRecovery`, `RecoveryFacts`, `CheckoutView`.
 - `checkout`: re-export of `openrails-checkout`.

@@ -54,6 +54,8 @@ export function billingKeys(scope: BillingScope) {
       list: (params: PageKeyParams = {}) =>
         [...root, "invoices", "list", params] as const,
       detail: (id: string) => [...root, "invoices", "detail", id] as const,
+      payments: (id: string, params: PageKeyParams = {}) =>
+        [...root, "invoices", "payments", id, params] as const,
     },
     notifications: {
       root: [...root, "notifications"] as const,

@@ -22,18 +22,20 @@ import {
   createCheckoutSessionRequestSchema,
   createPaymentMethodRequestSchema,
   invoiceListResponseSchema,
+  invoicePaymentAttemptPageSchema,
+  invoicePayNowResultSchema,
   invoiceSchema,
   messageResultSchema,
   notificationPageSchema,
   payInvoiceNowRequestSchema,
-  payInvoiceNowResultSchema,
   paymentMethodPageSchema,
   paymentMethodSchema,
   paymentPageSchema,
   queuedResultSchema,
-  retrySubscriptionNowResultSchema,
+  retrySubscriptionNowRequestSchema,
   setCollectionPaymentMethodRequestSchema,
   subscriptionPageSchema,
+  subscriptionRetryNowResultSchema,
   subscriptionSchema,
   tierChangePreviewSchema,
   tierChangeResponseSchema,
@@ -49,17 +51,19 @@ import {
   type CreatePaymentMethodRequest,
   type Invoice,
   type InvoiceListResponse,
+  type InvoicePaymentAttempt,
+  type InvoicePayNowResult,
   type MutationOutcome,
   type Notification,
   type Page,
   type PayInvoiceNowRequest,
-  type PayInvoiceNowResult,
   type Payment,
   type PaymentMethod,
   type QueuedResult,
-  type RetrySubscriptionNowResult,
+  type RetrySubscriptionNowRequest,
   type SetCollectionPaymentMethodRequest,
   type Subscription,
+  type SubscriptionRetryNowResult,
   type TierChangePreview,
   type TierChangeResponse,
   type UpdatePaymentMethodRequest,
@@ -227,17 +231,27 @@ export interface BillingClient {
     options?: MutationOptions
   ): Promise<Accepted<CheckoutSession>>
 
-  // #809 payer-owned recovery — PENDING the core contract. Typed against the
-  // provisional shapes in core/schemas.ts; the routes do not exist yet.
+  // #809 customer payment recovery. Each call sends one Idempotency-Key and
+  // is never retried: 200 is terminal, 202 carries the unresolved operation
+  // (watch it with the invoice/subscription reads, never resend), a provider
+  // refusal is a 402 BillingError (recoveryDeclineOf) and a refusal to
+  // attempt is a coded 409.
   payInvoiceNow(
     invoiceId: string,
     request: PayInvoiceNowRequest,
     options?: MutationOptions
-  ): Promise<Accepted<PayInvoiceNowResult>>
+  ): Promise<Accepted<InvoicePayNowResult>>
   retrySubscriptionNow(
     id: SubscriptionID,
+    request?: RetrySubscriptionNowRequest,
     options?: MutationOptions
-  ): Promise<Accepted<RetrySubscriptionNowResult>>
+  ): Promise<Accepted<SubscriptionRetryNowResult>>
+  // The invoice's immutable attempt history, newest first.
+  listInvoicePayments(
+    invoiceId: string,
+    params?: PageParams,
+    options?: CallOptions
+  ): Promise<Page<InvoicePaymentAttempt>>
 }
 
 export function createBillingClient(transport: Transport): BillingClient {
@@ -523,20 +537,30 @@ export function createBillingClient(transport: Transport): BillingClient {
         body,
         options
       )
-      return accepted(response, decode(payInvoiceNowResultSchema, response))
+      return accepted(response, decode(invoicePayNowResultSchema, response))
     },
 
-    async retrySubscriptionNow(id, options) {
+    async retrySubscriptionNow(id, request, options) {
+      const body = retrySubscriptionNowRequestSchema.parse(request ?? {})
       const response = await send(
         "POST",
         `/v1/me/subscriptions/${encode(id)}/retry-now`,
-        undefined,
+        body,
         options
       )
       return accepted(
         response,
-        decode(retrySubscriptionNowResultSchema, response)
+        decode(subscriptionRetryNowResultSchema, response)
       )
+    },
+
+    async listInvoicePayments(invoiceId, params, options) {
+      const response = await get(
+        `/v1/me/invoices/${encode(invoiceId)}/payments`,
+        { limit: params?.limit, offset: params?.offset },
+        options
+      )
+      return decode(invoicePaymentAttemptPageSchema, response)
     },
   }
 }

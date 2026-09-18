@@ -1,5 +1,11 @@
+import { isOperationUnresolved, type PaymentOperation } from "../core/recovery"
 import type { Invoice } from "../core/schemas"
-import { invoiceListLabels, type InvoiceListLabels } from "./labels"
+import {
+  invoiceListLabels,
+  type InvoiceListLabels,
+  type RecoveryLabels,
+} from "./labels"
+import { RecoveryFacts } from "./recovery-facts"
 import {
   cx,
   defaultFormatDate,
@@ -11,14 +17,23 @@ export interface InvoiceListProps {
   invoices: Invoice[]
   money: MoneyFormatter
   formatDate?: DateFormatter
-  labels?: Partial<InvoiceListLabels>
+  labels?: Partial<Omit<InvoiceListLabels, "recovery">> & {
+    recovery?: Partial<RecoveryLabels>
+  }
   className?: string
   onSelect?: (invoice: Invoice) => void
-  // #809 pay-now. The host passes canPayNow from the server's retryability
-  // flag; the view never decides eligibility itself.
+  // #809 pay-now. The control renders only when the server reports
+  // `recovery.retryable` and no operation is unresolved; the host picks the
+  // method from `recovery.compatible_payment_method_ids`.
   onPayNow?: (invoice: Invoice) => void
-  canPayNow?: (invoice: Invoice) => boolean
-  busyInvoiceId?: string | null
+  // The invoice the host is acting on, with its 202 operation and the last
+  // BillingError (402 decline / 409 refusal) for that invoice.
+  active?: {
+    invoiceId: string
+    busy?: boolean
+    operation?: PaymentOperation | null
+    error?: unknown
+  } | null
 }
 
 export function InvoiceList({
@@ -29,10 +44,13 @@ export function InvoiceList({
   className,
   onSelect,
   onPayNow,
-  canPayNow,
-  busyInvoiceId,
+  active,
 }: InvoiceListProps) {
-  const labels = { ...invoiceListLabels, ...overrides }
+  const labels = {
+    ...invoiceListLabels,
+    ...overrides,
+    recovery: { ...invoiceListLabels.recovery, ...overrides?.recovery },
+  }
   if (invoices.length === 0)
     return (
       <p className={cx("orb-invoices orb-invoices--empty", className)}>
@@ -42,14 +60,21 @@ export function InvoiceList({
   return (
     <ul className={cx("orb-invoices", className)}>
       {invoices.map((invoice) => {
-        const payable = !!onPayNow && (canPayNow?.(invoice) ?? false)
-        const busy = busyInvoiceId === invoice.id
+        const recovery = invoice.recovery
+        const mine = active?.invoiceId === invoice.id ? active : null
+        const confirming =
+          isOperationUnresolved(mine?.operation) ||
+          isOperationUnresolved(recovery?.operation)
+        const payable = !!onPayNow && !!recovery?.retryable && !confirming
+        const busy = !!mine?.busy
         return (
           <li
             key={invoice.id}
             className="orb-invoice"
             data-status={invoice.status}
             data-invoice-id={invoice.id}
+            data-retryable={String(recovery?.retryable ?? false)}
+            data-blocked-reason={recovery?.blocked_reason ?? ""}
           >
             <div className="orb-invoice__header">
               <span className="orb-invoice__number">
@@ -83,25 +108,14 @@ export function InvoiceList({
                   <dd>{formatDate(invoice.due_at)}</dd>
                 </>
               ) : null}
-              {invoice.next_collection_attempt_at ? (
-                <>
-                  <dt>{labels.nextAttempt}</dt>
-                  <dd>{formatDate(invoice.next_collection_attempt_at)}</dd>
-                </>
-              ) : null}
-              {invoice.collection_failure_count > 0 ? (
-                <>
-                  <dt>{labels.failedAttempts}</dt>
-                  <dd
-                    data-failure-code={
-                      invoice.last_collection_failure_code ?? ""
-                    }
-                  >
-                    {invoice.collection_failure_count}
-                  </dd>
-                </>
-              ) : null}
             </dl>
+            <RecoveryFacts
+              recovery={recovery}
+              operation={mine?.operation}
+              error={mine?.error}
+              labels={labels.recovery}
+              formatDate={formatDate}
+            />
             <div className="orb-invoice__actions">
               {onSelect ? (
                 <button

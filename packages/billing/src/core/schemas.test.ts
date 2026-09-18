@@ -3,6 +3,10 @@ import { describe, expect, it } from "vitest"
 import {
   billingStatusSchema,
   errorEnvelopeSchema,
+  invoicePayNowResultSchema,
+  isOperationUnresolved,
+  paymentRecoverySchema,
+  subscriptionRetryNowResultSchema,
   notificationSchema,
   pageSchema,
   parseCurrencyRegistry,
@@ -13,10 +17,12 @@ import {
 import billingStatus from "../test/fixtures/wire/billing_status.json"
 import currencies from "../test/fixtures/wire/currencies.json"
 import errorEnvelope from "../test/fixtures/wire/error_envelope.json"
+import invoicePayNow from "../test/fixtures/wire/invoice_pay_now.json"
 import notification from "../test/fixtures/wire/notification.json"
 import pageEmpty from "../test/fixtures/wire/page_empty.json"
 import payment from "../test/fixtures/wire/payment.json"
 import subscription from "../test/fixtures/wire/subscription.json"
+import subscriptionRetryNow from "../test/fixtures/wire/subscription_retry_now.json"
 
 const maxInt64 = "9223372036854775807"
 const minInt64 = "-9223372036854775808"
@@ -84,6 +90,55 @@ describe("wire fixtures", () => {
     expect(parsed.error.metadata?.committed_amount).toBe(maxInt64)
   })
 
+  it("decodes the recovery block on subscription.json and billing_status.json", () => {
+    for (const parsed of [
+      subscriptionSchema.parse(subscription),
+      billingStatusSchema.parse(billingStatus).subscription!,
+    ]) {
+      expect(parsed.recovery).toEqual({
+        retryable: false,
+        blocked_reason: "not_due",
+        attempt_count: 0,
+        compatible_payment_method_ids: [
+          "pm_dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        ],
+      })
+    }
+  })
+
+  it("decodes invoice_pay_now.json (unresolved 202 shape)", () => {
+    const parsed = invoicePayNowResultSchema.parse(invoicePayNow)
+    expect(parsed.invoice.amount_due).toBe(maxInt64)
+    expect(parsed.invoice.status).toBe("past_due")
+    expect(parsed.invoice.recovery).toMatchObject({
+      retryable: false,
+      blocked_reason: "outcome_unknown",
+      attempt_count: 2,
+      failure_category: "insufficient_funds",
+      last_failure_code: "201",
+      operation: { status: "unknown_needs_verify" },
+    })
+    expect(parsed.attempt).toMatchObject({
+      amount: maxInt64,
+      status: "attempted",
+      payment_method_id: "pm_dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    })
+    expect(parsed.operation).toEqual({
+      id: "01999999-9999-7999-8999-999999999999",
+      status: "unknown_needs_verify",
+    })
+    expect(isOperationUnresolved(parsed.operation)).toBe(true)
+    expect(parsed.replayed).toBe(false)
+  })
+
+  it("decodes subscription_retry_now.json (terminal 200 shape)", () => {
+    const parsed = subscriptionRetryNowResultSchema.parse(subscriptionRetryNow)
+    expect(parsed.subscription.recovery?.blocked_reason).toBe("not_due")
+    expect(parsed.payment?.amount).toBe(maxInt64)
+    expect(parsed.operation.status).toBe("succeeded")
+    expect(isOperationUnresolved(parsed.operation)).toBe(false)
+  })
+
   it("decodes page_empty.json", () => {
     const parsed = pageSchema(subscriptionSchema).parse(pageEmpty)
     expect(parsed.data).toEqual([])
@@ -115,5 +170,68 @@ describe("boundary refusals", () => {
     const withoutStatus: Record<string, unknown> = { ...subscription }
     delete withoutStatus.status
     expect(subscriptionSchema.safeParse(withoutStatus).success).toBe(false)
+  })
+})
+
+describe("recovery", () => {
+  const base = {
+    retryable: true,
+    attempt_count: 1,
+    compatible_payment_method_ids: null,
+  }
+
+  it("reads a null method list as empty and keeps optional facts", () => {
+    expect(
+      paymentRecoverySchema.parse(base).compatible_payment_method_ids
+    ).toEqual([])
+    expect(
+      paymentRecoverySchema.parse({
+        ...base,
+        next_attempt_at: "2026-09-19T00:00:00Z",
+        operation: {
+          id: "01999999-9999-7999-8999-999999999999",
+          status: "pending",
+        },
+      }).operation?.status
+    ).toBe("pending")
+  })
+
+  it("refuses unknown operation statuses and blocked reasons rather than guessing", () => {
+    for (const override of [
+      { blocked_reason: "maybe_later" },
+      {
+        operation: {
+          id: "01999999-9999-7999-8999-999999999999",
+          status: "done",
+        },
+      },
+      { retryable: "true" },
+      {
+        compatible_payment_method_ids: ["dddddddd-dddd-4ddd-8ddd-dddddddddddd"],
+      },
+    ])
+      expect(
+        paymentRecoverySchema.safeParse({ ...base, ...override }).success,
+        JSON.stringify(override)
+      ).toBe(false)
+  })
+
+  it("names the unresolved operation statuses as openrails PaymentOperation.Unresolved does", () => {
+    const id = "01999999-9999-7999-8999-999999999999"
+    for (const status of [
+      "pending",
+      "in_flight",
+      "unknown_needs_verify",
+      "failed_retryable",
+    ] as const)
+      expect(isOperationUnresolved({ id, status }), status).toBe(true)
+    for (const status of [
+      "succeeded",
+      "failed_terminal",
+      "superseded",
+      "expired",
+    ] as const)
+      expect(isOperationUnresolved({ id, status }), status).toBe(false)
+    expect(isOperationUnresolved(null)).toBe(false)
   })
 })

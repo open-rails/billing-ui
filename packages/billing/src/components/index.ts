@@ -7,7 +7,11 @@ export {
   SubscriptionState,
   type SubscriptionStateProps,
 } from "./subscription-state"
-export { PaymentRecovery, type PaymentRecoveryProps } from "./payment-recovery"
+export {
+  SubscriptionRecovery,
+  type SubscriptionRecoveryProps,
+} from "./subscription-recovery"
+export { RecoveryFacts } from "./recovery-facts"
 export {
   CheckoutView,
   type CheckoutOffer,
@@ -16,13 +20,15 @@ export {
 export {
   checkoutViewLabels,
   invoiceListLabels,
-  paymentRecoveryLabels,
+  recoveryLabels,
   savedMethodsLabels,
+  subscriptionRecoveryLabels,
   subscriptionStateLabels,
   type CheckoutViewLabels,
   type InvoiceListLabels,
-  type PaymentRecoveryLabels,
+  type RecoveryLabels,
   type SavedMethodsLabels,
+  type SubscriptionRecoveryLabels,
   type SubscriptionStateLabels,
 } from "./labels"
 export {

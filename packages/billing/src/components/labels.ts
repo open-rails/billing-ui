@@ -1,6 +1,59 @@
 // Default English labels for every neutral view. Hosts replace them through
 // each component's `labels` prop; nothing here is product copy policy.
 
+// Recovery facts shared by InvoiceList and SubscriptionRecovery. Keys of
+// `blocked` and `failureCategory` are OpenRails' wire values.
+export interface RecoveryLabels {
+  attempts: string
+  nextAttempt: string
+  lastFailure: string
+  lastFailedAt: string
+  // Shown while recovery.operation (or a 202's operation) is unresolved.
+  confirming: string
+  blocked: Record<string, string>
+  failureCategory: Record<string, string>
+  // 402 card_declined after pay-now / retry-now.
+  declined: string
+  // A coded 409 / 400 refusal to attempt; keyed by error code.
+  refused: Record<string, string>
+  refusedFallback: string
+}
+
+export const recoveryLabels: RecoveryLabels = {
+  attempts: "Attempts",
+  nextAttempt: "Next automatic attempt",
+  lastFailure: "Last failure",
+  lastFailedAt: "Last failed",
+  confirming: "Confirming your payment with the provider…",
+  blocked: {
+    not_due: "Nothing is due right now.",
+    uncollectible: "This balance can no longer be collected here.",
+    in_progress: "A payment attempt is already in progress.",
+    outcome_unknown: "A previous attempt is still being confirmed.",
+    rail_unsupported: "This payment is managed by the payment provider.",
+    no_compatible_payment_method: "Add a payment method to pay now.",
+  },
+  failureCategory: {},
+  declined: "Your payment was declined.",
+  refused: {
+    payment_recovery_rail_unsupported:
+      "This payment is managed by the payment provider.",
+    invoice_not_retryable: "This invoice cannot be paid now.",
+    invoice_retry_in_progress: "A payment attempt is already in progress.",
+    invoice_retry_outcome_unknown:
+      "A previous attempt is still being confirmed.",
+    invoice_retry_idempotency_conflict:
+      "This request was already used for a different payment.",
+    subscription_not_retryable: "This subscription cannot be retried now.",
+    subscription_retry_in_progress: "A payment attempt is already in progress.",
+    subscription_retry_outcome_unknown:
+      "A previous attempt is still being confirmed.",
+    collection_payment_method_invalid:
+      "That payment method cannot be used for this payment.",
+  },
+  refusedFallback: "The payment could not be attempted.",
+}
+
 export interface InvoiceListLabels {
   empty: string
   number: string
@@ -9,10 +62,9 @@ export interface InvoiceListLabels {
   amountDue: string
   total: string
   status: Record<string, string>
-  nextAttempt: string
-  failedAttempts: string
   payNow: string
   view: string
+  recovery: RecoveryLabels
 }
 
 export const invoiceListLabels: InvoiceListLabels = {
@@ -23,10 +75,9 @@ export const invoiceListLabels: InvoiceListLabels = {
   amountDue: "Amount due",
   total: "Total",
   status: {},
-  nextAttempt: "Next collection attempt",
-  failedAttempts: "Failed attempts",
   payNow: "Pay now",
   view: "View",
+  recovery: recoveryLabels,
 }
 
 export interface SavedMethodsLabels {
@@ -91,28 +142,24 @@ export const subscriptionStateLabels: SubscriptionStateLabels = {
   openPortal: "Manage on provider site",
 }
 
-export interface PaymentRecoveryLabels {
+export interface SubscriptionRecoveryLabels {
   title: string
-  lastAttempt: string
-  attempts: string
-  nextAttempt: string
-  graceEnds: string
   lastPayment: string
+  graceEnds: string
   retryNow: string
   updatePaymentMethod: string
   scheduled: string
+  recovery: RecoveryLabels
 }
 
-export const paymentRecoveryLabels: PaymentRecoveryLabels = {
+export const subscriptionRecoveryLabels: SubscriptionRecoveryLabels = {
   title: "Payment needed",
-  lastAttempt: "Last attempt",
-  attempts: "Attempts",
-  nextAttempt: "Next automatic attempt",
-  graceEnds: "Access continues until",
   lastPayment: "Last payment",
+  graceEnds: "Access continues until",
   retryNow: "Retry payment now",
   updatePaymentMethod: "Update payment method",
   scheduled: "We will try again automatically.",
+  recovery: recoveryLabels,
 }
 
 export interface CheckoutViewLabels {

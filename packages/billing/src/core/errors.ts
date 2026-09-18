@@ -53,7 +53,11 @@ export const ErrorCode = {
   paymentMethodDeleteFailed: "payment_method_delete_failed",
   paymentMethodDeleteUnsupported: "payment_method_delete_unsupported",
   providerOutcomeUnknown: "provider_outcome_unknown",
-  // invoices
+  // customer payment recovery (#809) and invoices
+  paymentRecoveryRailUnsupported: "payment_recovery_rail_unsupported",
+  subscriptionNotRetryable: "subscription_not_retryable",
+  subscriptionRetryInProgress: "subscription_retry_in_progress",
+  subscriptionRetryOutcomeUnknown: "subscription_retry_outcome_unknown",
   invoiceNotRetryable: "invoice_not_retryable",
   invoiceRetryInProgress: "invoice_retry_in_progress",
   invoiceRetryOutcomeUnknown: "invoice_retry_outcome_unknown",
@@ -185,7 +189,8 @@ export class BillingError extends Error {
     return (
       this.kind === "network" ||
       this.code === ErrorCode.providerOutcomeUnknown ||
-      this.code === ErrorCode.invoiceRetryOutcomeUnknown
+      this.code === ErrorCode.invoiceRetryOutcomeUnknown ||
+      this.code === ErrorCode.subscriptionRetryOutcomeUnknown
     )
   }
 }

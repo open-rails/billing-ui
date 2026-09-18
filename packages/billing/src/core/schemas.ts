@@ -18,6 +18,7 @@ import {
   uuidSchema,
 } from "./ids"
 import { amountSchema, unitDecimalsSchema } from "./money"
+import { paymentOperationSchema, paymentRecoverySchema } from "./recovery"
 
 export const instantSchema = z.iso.datetime({ offset: true })
 export type Instant = z.infer<typeof instantSchema>
@@ -155,6 +156,8 @@ export const subscriptionSchema = z.object({
   card: subscriptionCardSchema.nullish(),
   cancel_portal_url: optionalString,
   access: subscriptionAccessSchema.nullish(),
+  // #809 retry-now state; the self routes fill it.
+  recovery: paymentRecoverySchema.nullish(),
   created_at: instantSchema,
   updated_at: instantSchema,
 })
@@ -519,6 +522,8 @@ export const invoiceSchema = z.object({
   // The live collection operation; no competing collection runs while set.
   collection_intent_id: uuidSchema.nullish(),
   unit_decimals: unitDecimalsSchema.optional(),
+  // #809 pay-now state; the customer routes fill it.
+  recovery: paymentRecoverySchema.nullish(),
   created_at: instantSchema,
 })
 export type Invoice = z.infer<typeof invoiceSchema>
@@ -689,44 +694,42 @@ export type TierChangePreview = z.infer<typeof tierChangePreviewSchema>
 export const changeTierRequestSchema = z.object({ price_id: priceIdSchema })
 
 // ---------------------------------------------------------------------------
-// #809 payer-owned recovery actions — PENDING. These shapes follow the #809
-// contract (a new immutable attempt, explicit 200 or 202, provider-managed
-// rails refused) and the existing InvoiceCollectionRetryResult; they are
-// replaced by the exact DTOs when the core PR lands. Do not ship UI that
-// depends on a field below until then.
+// #809 customer payment recovery (openrails recovery.go). Both actions require
+// an Idempotency-Key; 200 is terminal, 202 carries the same shape while
+// operation is unresolved (poll the invoice / subscription, never resend); a
+// provider refusal is the 402 card_declined error (see recoveryDeclineOf).
 
-export const payInvoiceNowRequestSchema = z.object({
+export const invoicePaymentAttemptPageSchema = pageSchema(
+  invoicePaymentAttemptSchema
+)
+
+export const payInvoiceNowRequestSchema = z.strictObject({
   payment_method_id: paymentMethodIdSchema,
 })
 export type PayInvoiceNowRequest = z.infer<typeof payInvoiceNowRequestSchema>
 
-export const payInvoiceNowResultSchema = z.discriminatedUnion("status", [
-  z.object({
-    status: z.literal("succeeded"),
-    invoice: invoiceSchema,
-    attempt: invoicePaymentAttemptSchema,
-    replayed: z.boolean().optional(),
-  }),
-  z.object({
-    status: z.literal("queued"),
-    invoice_id: uuidSchema.optional(),
-    attempt_id: uuidSchema.optional(),
-  }),
-])
-export type PayInvoiceNowResult = z.infer<typeof payInvoiceNowResultSchema>
+export const invoicePayNowResultSchema = z.object({
+  invoice: invoiceSchema,
+  attempt: invoicePaymentAttemptSchema,
+  operation: paymentOperationSchema,
+  replayed: z.boolean(),
+})
+export type InvoicePayNowResult = z.infer<typeof invoicePayNowResultSchema>
 
-export const retrySubscriptionNowResultSchema = z.discriminatedUnion("status", [
-  z.object({
-    status: z.literal("succeeded"),
-    subscription: subscriptionSchema,
-    payment: subscriptionPaymentSchema.optional(),
-    replayed: z.boolean().optional(),
-  }),
-  z.object({
-    status: z.literal("queued"),
-    subscription_id: subscriptionIdSchema.optional(),
-  }),
-])
-export type RetrySubscriptionNowResult = z.infer<
-  typeof retrySubscriptionNowResultSchema
+// payment_method_id, when given, must be the subscription's current method.
+export const retrySubscriptionNowRequestSchema = z.strictObject({
+  payment_method_id: paymentMethodIdSchema.optional(),
+})
+export type RetrySubscriptionNowRequest = z.infer<
+  typeof retrySubscriptionNowRequestSchema
+>
+
+export const subscriptionRetryNowResultSchema = z.object({
+  subscription: subscriptionSchema,
+  payment: subscriptionPaymentSchema.nullish(),
+  operation: paymentOperationSchema,
+  replayed: z.boolean(),
+})
+export type SubscriptionRetryNowResult = z.infer<
+  typeof subscriptionRetryNowResultSchema
 >

@@ -15,6 +15,7 @@ export {
   useCheckoutSession,
   useCurrencies,
   useInvoice,
+  useInvoicePayments,
   useInvoices,
   useMoney,
   useNotifications,
@@ -43,9 +44,11 @@ export {
   type MutationOverrides,
 } from "./mutations"
 export {
+  useInvoiceRecoverySettlement,
   useInvoiceSettlement,
   usePaymentMethodSettlement,
   usePolledQuery,
+  useSubscriptionRecoverySettlement,
   useSubscriptionSettlement,
   type PollOptions,
   type PollResult,
