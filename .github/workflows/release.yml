@@ -11,6 +11,7 @@ permissions:
 jobs:
   publish:
     name: Publish to npm
+    if: startsWith(github.event.release.tag_name, 'v') && !startsWith(github.event.release.tag_name, 'billing-v')
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -54,3 +55,43 @@ jobs:
 
       - name: Publish package
         run: npm publish "./release/openrails-checkout-${GITHUB_REF_NAME#v}.tgz" --access public --provenance=false
+
+  verify-billing:
+    name: Verify @openrails/billing release
+    # Billing is deliberately package-only until its npm publication policy is
+    # approved. A billing-v* tag is the explicit opt-in for this check; normal
+    # checkout releases never package or publish the workspace package.
+    if: startsWith(github.event.release.tag_name, 'billing-v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11.0.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe502a0 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Verify billing release tag
+        run: node -e "const p=require('./packages/billing/package.json'); const tag='billing-v'+p.version; if (process.env.GITHUB_REF_NAME !== tag) throw new Error('billing release tag must be '+tag)"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Check billing package
+        run: pnpm --filter @openrails/billing check
+
+      - name: Build billing archive
+        run: |
+          mkdir release
+          pnpm --filter @openrails/billing pack --pack-destination release

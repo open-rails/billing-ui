@@ -3,15 +3,15 @@
   "version": "0.1.0",
   "description": "Direct-browser OpenRails billing client, React hooks and neutral views.",
   "type": "module",
-  "license": "FSL-1.1-ALv2",
+  "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/open-rails/openrails-checkout.git",
+    "url": "git+https://github.com/open-rails/billing-ui.git",
     "directory": "packages/billing"
   },
-  "homepage": "https://github.com/open-rails/openrails-checkout/tree/master/packages/billing#readme",
+  "homepage": "https://github.com/open-rails/billing-ui/tree/master/packages/billing#readme",
   "bugs": {
-    "url": "https://github.com/open-rails/openrails-checkout/issues"
+    "url": "https://github.com/open-rails/billing-ui/issues"
   },
   "engines": {
     "node": ">=22.12.0"
