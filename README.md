@@ -10,6 +10,11 @@ See [Payment form contract](docs/payment-form-contract.md) for the exact-money
 session document, billing fields, browser-autofill behavior, and the checkout
 request schema.
 
+This repository also holds [`@openrails/billing`](packages/billing/README.md),
+the direct-browser client, hooks and neutral views for OpenRails' `/v1/me`
+surface. It is a separate package; the hosted checkout flow moves into it
+only after the direct `/v1/me/checkout` contract is qualified.
+
 ```tsx
 import { Checkout, createHttpSource } from "openrails-checkout"
 import "openrails-checkout/styles.css"

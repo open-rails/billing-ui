@@ -51,3 +51,6 @@ jobs:
 
       - name: Verify publish contents
         run: npm pack --dry-run
+
+      - name: Verify billing publish contents
+        run: pnpm --filter @openrails/billing exec npm pack --dry-run

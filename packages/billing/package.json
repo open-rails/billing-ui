@@ -1,0 +1,101 @@
+{
+  "name": "@openrails/billing",
+  "version": "0.1.0",
+  "description": "Direct-browser OpenRails billing client, React hooks and neutral views.",
+  "type": "module",
+  "license": "FSL-1.1-ALv2",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/open-rails/openrails-checkout.git",
+    "directory": "packages/billing"
+  },
+  "homepage": "https://github.com/open-rails/openrails-checkout/tree/master/packages/billing#readme",
+  "bugs": {
+    "url": "https://github.com/open-rails/openrails-checkout/issues"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "files": [
+    "dist",
+    "CHANGELOG.md",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./core": {
+      "types": "./dist/core/index.d.ts",
+      "import": "./dist/core.js"
+    },
+    "./transport": {
+      "types": "./dist/transport/index.d.ts",
+      "import": "./dist/transport.js"
+    },
+    "./client": {
+      "types": "./dist/client/index.d.ts",
+      "import": "./dist/client.js"
+    },
+    "./react": {
+      "types": "./dist/react/index.d.ts",
+      "import": "./dist/react.js"
+    },
+    "./components": {
+      "types": "./dist/components/index.d.ts",
+      "import": "./dist/components.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "check": "pnpm typecheck && pnpm lint && pnpm test && pnpm build"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": false
+  },
+  "peerDependencies": {
+    "@tanstack/react-query": ">=5.90 <6",
+    "react": ">=19 <20",
+    "react-dom": ">=19 <20"
+  },
+  "peerDependenciesMeta": {
+    "@tanstack/react-query": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@tanstack/react-query": "^5.101.4",
+    "@testing-library/jest-dom": "^7.0.0",
+    "@testing-library/react": "^16.3.2",
+    "@types/node": "^26.2.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^6.0.5",
+    "jsdom": "^30.0.1",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "typescript": "^5.9.3",
+    "vite": "^8.2.1",
+    "vite-plugin-dts": "^5.0.3",
+    "vitest": "^4.1.10"
+  }
+}

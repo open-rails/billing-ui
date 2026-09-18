@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- The repository is a pnpm workspace: `packages/billing` is the new
+  `@openrails/billing` package (its own changelog); this package is unchanged.
+
 ## 0.3.0
 
 Breaking: the session document carries exact money.
