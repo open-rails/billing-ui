@@ -680,3 +680,31 @@ describe("provider redirects", () => {
     )
   })
 })
+
+describe("tier change refusal labels", () => {
+  it("names every tier-change refusal code", () => {
+    for (const [code, label] of [
+      ["tier_change_in_flight", "A plan change is already in progress."],
+      [
+        "tier_change_idempotency_conflict",
+        "That request was already used for a different plan change.",
+      ],
+      ["tier_change_refused", "The plan change was refused."],
+      [
+        "tier_change_idempotency_key_required",
+        "The plan change could not be started. Try again.",
+      ],
+    ] as const) {
+      const { unmount } = render(
+        <SubscriptionRecovery
+          subscription={subscription}
+          money={money}
+          error={refused(code)}
+        />
+      )
+      expect(screen.getByRole("alert"), code).toHaveTextContent(label)
+      expect(screen.getByRole("alert")).toHaveAttribute("data-code", code)
+      unmount()
+    }
+  })
+})

@@ -19,6 +19,7 @@ import { createTransport } from "../transport/request"
 import { billingKeys } from "./keys"
 import {
   useCancelSubscription,
+  useChangeTier,
   useDeletePaymentMethod,
   usePayInvoiceNow,
   useRetrySubscriptionNow,
@@ -746,5 +747,75 @@ describe("settlement freshness and scope", () => {
     rerender()
     expect(result.current.timedOut).toBe(false)
     expect(result.current.polling).toBe(true)
+  })
+})
+
+describe("tier change identity", () => {
+  it("keeps one operation key across an uncertain change-tier retry", async () => {
+    let n = 0
+    let lost = true
+    const server = fixtureServer()
+    server.route("POST", `/v1/me/subscriptions/${subId}/change-tier`, () => {
+      if (lost) throw new NetworkFailure()
+      return json(
+        {
+          object: "tier_change",
+          status: "processing",
+          mode: "tier_change",
+          price_id: "price_bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          payment: { rail: "nmi" },
+          amount_due_now: "4000000",
+          next_charge_amount: "9000000",
+          operation_id: "01999999-9999-7999-8999-999999999999",
+        },
+        202
+      )
+    })
+    const client = createBillingClient(
+      createTransport({
+        baseUrl: "https://billing.example",
+        auth: bearerAuth("tok"),
+        fetch: server.fetch,
+        idempotencyKey: () => `generated-${++n}`,
+      })
+    )
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        mutations: { retry: 2, retryDelay: 0 },
+        queries: { retry: false },
+      },
+    })
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>
+        <BillingProvider client={client} merchant="acme" subject="user-1">
+          {children}
+        </BillingProvider>
+      </QueryClientProvider>
+    )
+    const { result } = renderHook(() => useChangeTier(), { wrapper })
+    const change = () =>
+      act(async () => {
+        await result.current
+          .mutateAsync({
+            id: subId,
+            priceId: "price_bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          })
+          .catch(() => undefined)
+      })
+    await change()
+    // The host default would have retried with a second key; it does not.
+    expect(
+      server.requests.map((r) => r.headers.get("Idempotency-Key"))
+    ).toEqual(["generated-1"])
+    lost = false
+    await change()
+    // The retry replays the same operation and reads the 202 back.
+    expect(server.requests[1].headers.get("Idempotency-Key")).toBe(
+      "generated-1"
+    )
+    await waitFor(() => expect(result.current.data?.status).toBe(202))
+    expect(result.current.data?.data.operation_id).toBe(
+      "01999999-9999-7999-8999-999999999999"
+    )
   })
 })

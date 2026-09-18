@@ -657,9 +657,11 @@ export type ConfirmCheckoutSessionRequest = z.infer<
 // ---------------------------------------------------------------------------
 // Tier changes (openrails.TierChangeResponse / TierChangePreviewResponse).
 
+// status "processing" is the 202: a durable operation owns the change and
+// operation_id names it; the same Idempotency-Key replays the stored result.
 export const tierChangeResponseSchema = z.object({
   object: z.literal("tier_change"),
-  status: z.enum(["succeeded", "requires_action", "blocked"]),
+  status: z.enum(["succeeded", "processing", "requires_action", "blocked"]),
   mode: z.string(),
   action: z.string().optional(),
   price_id: priceIdSchema,
@@ -673,6 +675,7 @@ export const tierChangeResponseSchema = z.object({
   amount_due_now: amountSchema,
   next_charge_amount: amountSchema,
   next_charge_date: optionalInstant,
+  operation_id: z.string().optional(),
 })
 export type TierChangeResponse = z.infer<typeof tierChangeResponseSchema>
 

@@ -50,6 +50,12 @@ export const recoveryLabels: RecoveryLabels = {
       "A previous attempt is still being confirmed.",
     collection_payment_method_invalid:
       "That payment method cannot be used for this payment.",
+    tier_change_in_flight: "A plan change is already in progress.",
+    tier_change_idempotency_conflict:
+      "That request was already used for a different plan change.",
+    tier_change_idempotency_key_required:
+      "The plan change could not be started. Try again.",
+    tier_change_refused: "The plan change was refused.",
   },
   refusedFallback: "The payment could not be attempted.",
 }

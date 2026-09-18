@@ -164,8 +164,14 @@ export interface BillingClient {
   previewTierChange(
     id: SubscriptionID,
     priceId: PriceID,
-    options?: MutationOptions
+    options?: CallOptions
   ): Promise<TierChangePreview>
+  // A tier change always carries an Idempotency-Key (#491/#495 refuse a
+  // keyless request): 200 terminal, 202 while status is "processing" and
+  // operation_id names the durable operation. Replay the same key to read a
+  // lost outcome back; a different key for the same subscription is
+  // tier_change_in_flight, and a reused key with different terms is
+  // tier_change_idempotency_conflict.
   changeTier(
     id: SubscriptionID,
     priceId: PriceID,
@@ -376,14 +382,16 @@ export function createBillingClient(transport: Transport): BillingClient {
       return accepted(response, decode(subscriptionSchema, response))
     },
 
+    // The preview mutates nothing and is the one POST sent without a key.
     async previewTierChange(id, priceId, options) {
       const body = changeTierRequestSchema.parse({ price_id: priceId })
-      const response = await send(
-        "POST",
-        `/v1/me/subscriptions/${encode(id)}/change-tier/preview`,
+      const response = await transport.request({
+        method: "POST",
+        path: `/v1/me/subscriptions/${encode(id)}/change-tier/preview`,
         body,
-        options
-      )
+        signal: options?.signal,
+        idempotency: "none",
+      })
       return decode(tierChangePreviewSchema, response)
     },
 

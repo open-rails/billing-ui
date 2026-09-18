@@ -55,6 +55,10 @@ export interface RequestSpec {
   // "required" (default): without a credential nothing is sent and the call
   // fails as not signed in. "none": public routes such as /v1/currencies.
   auth?: "required" | "none"
+  // "auto" (default): every mutation carries an Idempotency-Key. "none" is
+  // for non-mutating POSTs such as a tier-change preview, which the server
+  // refuses to key.
+  idempotency?: "auto" | "none"
 }
 
 export interface RawResponse {
@@ -419,9 +423,8 @@ export function createTransport(options: TransportOptions): Transport {
   async function request(spec: RequestSpec): Promise<RawResponse> {
     const finalUrl = url(spec.path, spec.query)
     const mutation = isMutation(spec.method)
-    const idempotencyKey = mutation
-      ? (spec.idempotencyKey ?? newKey())
-      : undefined
+    const keyed = mutation && spec.idempotency !== "none"
+    const idempotencyKey = keyed ? (spec.idempotencyKey ?? newKey()) : undefined
     if (idempotencyKey !== undefined && !isValidIdempotencyKey(idempotencyKey))
       throw new Error("billing: Idempotency-Key must be 1–255 bytes")
     const attempts = mutation ? 1 : Math.max(1, retry.attempts)

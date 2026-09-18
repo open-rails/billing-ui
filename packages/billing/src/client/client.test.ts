@@ -572,3 +572,140 @@ describe("decode failures on mutations", () => {
     expect(error.isOutcomeUnknown).toBe(true)
   })
 })
+
+// #491/#495: a tier change is a durable operation keyed by the client's
+// Idempotency-Key; the server refuses a keyless request outright.
+describe("tier changes", () => {
+  const changeTierPath = `/v1/me/subscriptions/${subId}/change-tier`
+  const tierChange = {
+    object: "tier_change",
+    status: "succeeded",
+    mode: "tier_change",
+    action: "upgrade",
+    price_id: priceId,
+    payment: { rail: "nmi" },
+    subscription_id: subId,
+    amount_due_now: "4000000",
+    next_charge_amount: "9000000",
+  }
+
+  it("sends an Idempotency-Key on every change-tier call", async () => {
+    const { server, client } = setup()
+    server.route("POST", changeTierPath, () => json(tierChange))
+    const first = await client.changeTier(subId, priceId)
+    expect(first.idempotencyKey).toBe("idem_1")
+    expect(server.requests[0].headers.get("Idempotency-Key")).toBe("idem_1")
+    expect(server.requests[0].body).toEqual({ price_id: priceId })
+    // Replaying a lost outcome reuses the caller's key byte for byte.
+    const replay = await client.changeTier(subId, priceId, {
+      idempotencyKey: "idem_1",
+    })
+    expect(replay.idempotencyKey).toBe("idem_1")
+    expect(server.requests[1].headers.get("Idempotency-Key")).toBe("idem_1")
+  })
+
+  it("makes a keyless change-tier impossible through the client API", async () => {
+    const { server, client } = setup()
+    server.route("POST", changeTierPath, () => json(tierChange))
+    // There is no option that suppresses the key, and an empty or oversized
+    // one is refused before anything is sent.
+    for (const idempotencyKey of ["", " ", "k".repeat(256)])
+      await expect(
+        client.changeTier(subId, priceId, { idempotencyKey }),
+        JSON.stringify(idempotencyKey)
+      ).rejects.toThrow(/1–255 bytes/)
+    expect(server.requests).toHaveLength(0)
+    await client.changeTier(subId, priceId, { idempotencyKey: undefined })
+    expect(server.requests[0].headers.get("Idempotency-Key")).toBe("idem_1")
+  })
+
+  it("keeps the preview keyless: it mutates nothing", async () => {
+    const { server, client } = setup()
+    server.route("POST", `${changeTierPath}/preview`, () =>
+      json({
+        object: "tier_change_preview",
+        action: "upgrade",
+        price_id: priceId,
+        rail: "nmi",
+        currency: "USD",
+        amount_due_now: "4000000",
+        next_charge_amount: "9000000",
+        effective: "now",
+        is_estimate: false,
+      })
+    )
+    const preview = await client.previewTierChange(subId, priceId)
+    expect(preview.amount_due_now).toBe("4000000")
+    expect(server.requests[0].headers.get("Idempotency-Key")).toBeNull()
+  })
+
+  it("answers 202 processing with the durable operation id", async () => {
+    const { server, client } = setup()
+    server.route("POST", changeTierPath, () =>
+      json(
+        {
+          ...tierChange,
+          status: "processing",
+          operation_id: "01999999-9999-7999-8999-999999999999",
+          message: "We are confirming this change with the provider.",
+        },
+        202
+      )
+    )
+    const result = await client.changeTier(subId, priceId)
+    expect(result.status).toBe(202)
+    expect(result.data.status).toBe("processing")
+    expect(result.data.operation_id).toBe(
+      "01999999-9999-7999-8999-999999999999"
+    )
+    expect(result.idempotencyKey).toBe("idem_1")
+  })
+
+  it("surfaces the tier-change refusal codes typed", async () => {
+    const { server, client } = setup()
+    const cases = [
+      {
+        status: 409,
+        code: "tier_change_in_flight",
+        conflict: true,
+        reuse: false,
+      },
+      {
+        status: 409,
+        code: "tier_change_idempotency_conflict",
+        conflict: true,
+        reuse: true,
+      },
+      {
+        status: 400,
+        code: "tier_change_idempotency_key_required",
+        conflict: false,
+        reuse: false,
+      },
+      {
+        status: 409,
+        code: "tier_change_refused",
+        conflict: true,
+        reuse: false,
+      },
+    ]
+    for (const expected of cases) {
+      server.route("POST", changeTierPath, () =>
+        errorEnvelope(expected.status, expected.code, {
+          metadata: { operation_id: "01999999-9999-7999-8999-999999999999" },
+        })
+      )
+      const error = await client.changeTier(subId, priceId).catch((e) => e)
+      expect(error, expected.code).toBeInstanceOf(BillingError)
+      expect(error.status).toBe(expected.status)
+      expect(error.code).toBe(expected.code)
+      expect(error.isConflict).toBe(expected.conflict)
+      expect(error.isIdempotencyReuse).toBe(expected.reuse)
+      expect(error.isOutcomeUnknown).toBe(false)
+      expect(error.idempotencyKey).toBe("idem_1")
+      expect(error.metadata?.operation_id).toBe(
+        "01999999-9999-7999-8999-999999999999"
+      )
+    }
+  })
+})

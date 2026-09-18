@@ -68,6 +68,13 @@ cancelled, unreadable, 5xx): replay it only with `error.idempotencyKey`.
 `Accepted<T>` (`status`, `data`, `idempotencyKey`); 202/204 outcomes are
 named (`"queued"`, `outcome: "pending" | "completed"`).
 
+A tier change (#491/#495) always carries an `Idempotency-Key`: the server
+refuses a keyless request, 202 means `status: "processing"` with
+`operation_id`, replaying the same key reads the outcome back, another key
+while one is unresolved is `tier_change_in_flight`, and a reused key with
+different terms is `tier_change_idempotency_conflict`. `previewTierChange`
+mutates nothing and is the one POST sent without a key.
+
 Customer payment recovery (#809): `payInvoiceNow(invoiceId,
 {payment_method_id})`, `retrySubscriptionNow(id, {payment_method_id?})` and
 `listInvoicePayments(invoiceId)`. Each action sends one `Idempotency-Key`

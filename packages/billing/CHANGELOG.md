@@ -19,6 +19,9 @@ First cut of the shared direct-browser billing package (tracker #1011).
   `listInvoicePayments` on the exact core contract (openrails `dca35f2f3`),
   the `recovery` block on invoices and subscriptions, typed 402 declines and
   409 refusal codes.
+- Tier changes carry the client `Idempotency-Key` #491/#495 now require, with
+  the `tier_change_*` refusal codes and the 202 `processing`/`operation_id`
+  shape; the preview stays keyless.
 - `react`: provider, scoped query keys, read and mutation hooks on the host's
   QueryClient (mutation retry pinned off, key reuse after an uncertain
   failure), 202 settlement polling that only settles from a fresh read and is

@@ -53,6 +53,12 @@ export const ErrorCode = {
   paymentMethodDeleteFailed: "payment_method_delete_failed",
   paymentMethodDeleteUnsupported: "payment_method_delete_unsupported",
   providerOutcomeUnknown: "provider_outcome_unknown",
+  // tier changes (#491/#495): the client key is required and is the only
+  // way to read back a lost response.
+  tierChangeIdempotencyKeyRequired: "tier_change_idempotency_key_required",
+  tierChangeIdempotencyConflict: "tier_change_idempotency_conflict",
+  tierChangeInFlight: "tier_change_in_flight",
+  tierChangeRefused: "tier_change_refused",
   // customer payment recovery (#809) and invoices
   paymentRecoveryRailUnsupported: "payment_recovery_rail_unsupported",
   subscriptionNotRetryable: "subscription_not_retryable",
@@ -210,7 +216,10 @@ export class BillingError extends Error {
   }
   // Retrying the identical operation with the same key changed its terms.
   get isIdempotencyReuse(): boolean {
-    return this.code === ErrorCode.idempotencyKeyReused
+    return (
+      this.code === ErrorCode.idempotencyKeyReused ||
+      this.code === ErrorCode.tierChangeIdempotencyConflict
+    )
   }
   get isMutation(): boolean {
     return this.method !== "" && this.method !== "GET"
