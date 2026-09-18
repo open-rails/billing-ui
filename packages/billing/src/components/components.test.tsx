@@ -128,6 +128,7 @@ describe("SubscriptionState", () => {
         subscription={{ ...subscription, cancel_mode: "external_portal" }}
         money={money}
         onCancel={onCancel}
+        redirectOrigins={["https://support.ccbill.com"]}
       />
     )
     expect(
@@ -510,6 +511,7 @@ describe("CheckoutView", () => {
     const onContinue = vi.fn()
     const { rerender } = render(
       <CheckoutView
+        redirectOrigins={["https://pay.example"]}
         offer={offer}
         money={money}
         savedMethods={[method]}
@@ -542,6 +544,7 @@ describe("CheckoutView", () => {
     })
     rerender(
       <CheckoutView
+        redirectOrigins={["https://pay.example"]}
         offer={offer}
         money={money}
         selectedMethodId={null}
@@ -560,6 +563,7 @@ describe("CheckoutView", () => {
 
     rerender(
       <CheckoutView
+        redirectOrigins={["https://pay.example"]}
         offer={offer}
         money={money}
         selectedMethodId={null}
@@ -570,5 +574,109 @@ describe("CheckoutView", () => {
     )
     expect(screen.getByRole("status")).toHaveTextContent("Payment complete.")
     expect(screen.queryByRole("button")).toBeNull()
+  })
+})
+
+// PR13 review finding 7: server-supplied navigation targets are validated
+// before the host is offered them.
+describe("provider redirects", () => {
+  const offer = {
+    display_name: "Access",
+    unit_amount: "1000000",
+    currency: "USD",
+    auto_renew: false,
+  }
+  const session = (url: string): CheckoutSession =>
+    checkoutSessionSchema.parse({
+      object: "checkout_session",
+      id: "cs_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      mode: "subscription",
+      price_id: "price_bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      amount: "1000000",
+      currency: "USD",
+      payment: { rail: "ccbill" },
+      created_at: "2026-09-16T00:00:00Z",
+      status: "requires_action",
+      next_action: { type: "redirect_to_url", redirect_to_url: { url } },
+    })
+
+  it("refuses executable provider redirect URLs before a host continuation callback", () => {
+    for (const unsafe of [
+      "javascript:window.__billing_pwned=true",
+      "data:text/html,<script>alert(1)</script>",
+      "http://pay.example/x",
+      "https://user:pass@pay.example/x",
+      "https://evil.example/x",
+    ]) {
+      const onContinue = vi.fn()
+      const { unmount } = render(
+        <CheckoutView
+          redirectOrigins={["https://pay.example"]}
+          offer={offer}
+          money={money}
+          selectedMethodId={null}
+          onSelectMethod={() => {}}
+          onSubmit={() => {}}
+          session={session(unsafe)}
+          onContinue={onContinue}
+        />
+      )
+      expect(
+        screen.queryByRole("button", { name: /continue/i }),
+        unsafe
+      ).toBeNull()
+      expect(screen.queryByRole("link"), unsafe).toBeNull()
+      expect(screen.getByRole("alert")).toHaveAttribute(
+        "data-notice",
+        "unsafe-redirect"
+      )
+      expect(onContinue).not.toHaveBeenCalled()
+      unmount()
+    }
+  })
+
+  it("offers an allowed https hop as a link when the host has no callback", () => {
+    render(
+      <CheckoutView
+        redirectOrigins={["https://pay.example"]}
+        offer={offer}
+        money={money}
+        selectedMethodId={null}
+        onSelectMethod={() => {}}
+        onSubmit={() => {}}
+        session={session("https://pay.example/hop?id=1")}
+      />
+    )
+    expect(screen.getByRole("link", { name: "Continue" })).toHaveAttribute(
+      "href",
+      "https://pay.example/hop?id=1"
+    )
+  })
+
+  it("renders the cancel portal link only for an allowed https origin", () => {
+    const external = { ...subscription, cancel_mode: "external_portal" }
+    const { rerender } = render(
+      <SubscriptionState subscription={external} money={money} />
+    )
+    expect(screen.queryByRole("link")).toBeNull()
+    rerender(
+      <SubscriptionState
+        subscription={{ ...external, cancel_portal_url: "javascript:alert(1)" }}
+        money={money}
+        redirectOrigins={["https://support.ccbill.com"]}
+      />
+    )
+    expect(screen.queryByRole("link")).toBeNull()
+    rerender(
+      <SubscriptionState
+        subscription={external}
+        money={money}
+        redirectOrigins={["https://support.ccbill.com"]}
+      />
+    )
+    expect(screen.getByRole("link")).toHaveAttribute(
+      "href",
+      "https://support.ccbill.com/"
+    )
   })
 })

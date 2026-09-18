@@ -151,9 +151,6 @@ importers:
       jsdom:
         specifier: ^30.0.1
         version: 30.0.1
-      openrails-checkout:
-        specifier: workspace:*
-        version: link:../..
       react:
         specifier: ^19.2.8
         version: 19.2.8

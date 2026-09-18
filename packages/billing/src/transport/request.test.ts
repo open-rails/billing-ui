@@ -426,3 +426,235 @@ describe("timeouts", () => {
     expect(error.message).toMatch(/20ms/)
   })
 })
+
+// PR13 review (findings 1, 4 and signed-out scope): every mutation failure
+// that does not prove the outcome keeps the key it was sent under; the
+// attempt's timeout and cancellation cover the whole body read; body-read
+// failures are their own typed kind.
+describe("uncertain mutation failures keep their operation identity", () => {
+  const sentKey = (server: ReturnType<typeof fixtureServer>) =>
+    server.requests[0].headers.get("Idempotency-Key")
+
+  it("retains the generated key when a mutation response is lost", async () => {
+    const server = fixtureServer()
+    server.route("POST", "/v1/me/checkout", () => {
+      throw new NetworkFailure()
+    })
+    const { transport } = transportWith(server, bearerAuth("t"), {
+      idempotencyKey: () => "operation-1",
+    })
+    const error = await transport
+      .request({ method: "POST", path: "/v1/me/checkout", body: {} })
+      .catch((e) => e)
+    expect(error).toBeInstanceOf(BillingError)
+    expect(error.idempotencyKey).toBe("operation-1")
+    expect(error.idempotencyKey).toBe(sentKey(server))
+    expect(error.isOutcomeUnknown).toBe(true)
+  })
+
+  it("retains the key on a 5xx and marks a mutation 5xx outcome-unknown", async () => {
+    const server = fixtureServer()
+    server.route("POST", "/v1/me/checkout", () =>
+      errorEnvelope(502, "internal_error")
+    )
+    const { transport } = transportWith(server, bearerAuth("t"), {
+      idempotencyKey: () => "operation-5xx",
+    })
+    const error = await transport
+      .request({ method: "POST", path: "/v1/me/checkout", body: {} })
+      .catch((e) => e)
+    expect(error.idempotencyKey).toBe("operation-5xx")
+    expect(error.isOutcomeUnknown).toBe(true)
+    // A definite refusal is not outcome-unknown but still names its key.
+    server.route("POST", "/v1/me/checkout", () =>
+      errorEnvelope(409, "invoice_not_retryable")
+    )
+    const refused = await transport
+      .request({ method: "POST", path: "/v1/me/checkout", body: {} })
+      .catch((e) => e)
+    expect(refused.isOutcomeUnknown).toBe(false)
+    expect(refused.idempotencyKey).toBe("operation-5xx")
+  })
+
+  it("keeps the key when the caller cancels a mutation after dispatch", async () => {
+    const controller = new AbortController()
+    const server = fixtureServer()
+    server.route(
+      "POST",
+      "/v1/me/checkout",
+      (req) =>
+        new Promise((_resolve, reject) => {
+          req.signal?.addEventListener("abort", () =>
+            reject(req.signal?.reason)
+          )
+          controller.abort()
+        })
+    )
+    const { transport } = transportWith(server, bearerAuth("t"), {
+      idempotencyKey: () => "operation-cancel",
+    })
+    const error = await transport
+      .request({
+        method: "POST",
+        path: "/v1/me/checkout",
+        body: {},
+        signal: controller.signal,
+      })
+      .catch((e) => e)
+    expect(error).toBeInstanceOf(BillingError)
+    expect(error.kind).toBe("aborted")
+    expect(error.code).toBe("request_aborted")
+    expect(error.idempotencyKey).toBe("operation-cancel")
+    expect(error.isOutcomeUnknown).toBe(true)
+  })
+
+  it("keeps the timeout active while the success body is still streaming", async () => {
+    let controller!: ReadableStreamDefaultController
+    let sentSignal: AbortSignal | null | undefined
+    const { transport } = transportWith(
+      { fetch: undefined } as never,
+      bearerAuth("t"),
+      {
+        timeoutMs: 5,
+        retry: { attempts: 1 },
+        fetch: async (_url, init) => {
+          sentSignal = init?.signal
+          return new Response(
+            new ReadableStream({
+              start(c) {
+                controller = c
+                init?.signal?.addEventListener(
+                  "abort",
+                  () => c.error(init.signal?.reason),
+                  { once: true }
+                )
+              },
+            })
+          )
+        },
+      }
+    )
+    let settledAs: unknown = "pending"
+    const request = transport
+      .request({ method: "GET", path: "/v1/me/status" })
+      .then(
+        () => (settledAs = "resolved"),
+        (e) => (settledAs = e)
+      )
+    await new Promise((resolve) => setTimeout(resolve, 35))
+    expect(sentSignal?.aborted).toBe(true)
+    expect(settledAs).toBeInstanceOf(BillingError)
+    expect((settledAs as BillingError).code).toBe("request_timeout")
+    expect((settledAs as BillingError).kind).toBe("body")
+    // The stream already errored on abort; closing it is a no-op here.
+    try {
+      controller.close()
+    } catch {
+      // already errored
+    }
+    await request
+  })
+
+  it("times out a stalled body even when fetch does not tie it to the signal", async () => {
+    const { transport } = transportWith(
+      { fetch: undefined } as never,
+      bearerAuth("t"),
+      {
+        timeoutMs: 5,
+        retry: { attempts: 1 },
+        idempotencyKey: () => "operation-stall",
+        fetch: async () => new Response(new ReadableStream({ start() {} })),
+      }
+    )
+    const error = await transport
+      .request({ method: "POST", path: "/v1/me/checkout", body: {} })
+      .catch((e) => e)
+    expect(error.code).toBe("request_timeout")
+    expect(error.idempotencyKey).toBe("operation-stall")
+    expect(error.isOutcomeUnknown).toBe(true)
+  })
+
+  it("classifies connection loss while reading a body as a typed, outcome-unknown error", async () => {
+    const { transport } = transportWith(
+      { fetch: undefined } as never,
+      bearerAuth("t"),
+      {
+        idempotencyKey: () => "operation-body",
+        fetch: async () =>
+          new Response(
+            new ReadableStream({
+              start(c) {
+                c.error(new TypeError("body connection lost"))
+              },
+            })
+          ),
+      }
+    )
+    const error = await transport
+      .request({ method: "POST", path: "/v1/me/checkout", body: {} })
+      .catch((e) => e)
+    expect(error).toBeInstanceOf(BillingError)
+    expect(error.kind).toBe("body")
+    expect(error.code).toBe("response_body_interrupted")
+    expect(error.cause).toBeInstanceOf(TypeError)
+    expect(error.idempotencyKey).toBe("operation-body")
+    expect(error.isOutcomeUnknown).toBe(true)
+  })
+
+  it("cancels a GET body read with the caller's own abort reason", async () => {
+    const controller = new AbortController()
+    const { transport } = transportWith(
+      { fetch: undefined } as never,
+      bearerAuth("t"),
+      {
+        fetch: async () => {
+          queueMicrotask(() => controller.abort(new Error("left the page")))
+          return new Response(new ReadableStream({ start() {} }))
+        },
+      }
+    )
+    const error = await transport
+      .request({
+        method: "GET",
+        path: "/v1/me/status",
+        signal: controller.signal,
+      })
+      .catch((e) => e)
+    expect(error).toBeInstanceOf(Error)
+    expect(error.message).toBe("left the page")
+  })
+})
+
+describe("signed out", () => {
+  it("sends nothing on an authenticated route without a credential", async () => {
+    const server = fixtureServer()
+    server.route("GET", "/v1/me/status", () => json({}))
+    const { transport } = transportWith(
+      server,
+      bearerAuth(() => null)
+    )
+    const error = await transport
+      .request({ method: "GET", path: "/v1/me/status" })
+      .catch((e) => e)
+    expect(error).toBeInstanceOf(BillingError)
+    expect(error.kind).toBe("unauthenticated")
+    expect(error.code).toBe("not_signed_in")
+    expect(error.isUnauthorized).toBe(true)
+    expect(server.requests).toHaveLength(0)
+  })
+
+  it("still reads public routes anonymously", async () => {
+    const server = fixtureServer()
+    server.route("GET", "/v1/currencies", () => json({}))
+    const { transport } = transportWith(
+      server,
+      bearerAuth(() => null)
+    )
+    await transport.request({
+      method: "GET",
+      path: "/v1/currencies",
+      auth: "none",
+    })
+    expect(server.requests[0].headers.get("Authorization")).toBeNull()
+  })
+})

@@ -7,7 +7,8 @@ import {
   type CheckoutViewLabels,
   type SavedMethodsLabels,
 } from "./labels"
-import { checkoutRedirectURL, cx, type MoneyFormatter } from "./shared"
+import { safeRedirectURL } from "../core/redirect"
+import { checkoutRedirectCandidate, cx, type MoneyFormatter } from "./shared"
 
 export interface CheckoutOffer {
   display_name: string
@@ -35,8 +36,10 @@ export interface CheckoutViewProps {
   session?: CheckoutSession | null
   error?: string | null
   // A requires_action redirect (next_action.redirect_to_url / payment
-  // .redirect_url / url) is followed by the host: the view only offers it.
+  // .redirect_url / url) is followed by the host: the view only offers it,
+  // and only an https URL on one of these origins.
   onContinue?: (url: string) => void
+  redirectOrigins: readonly string[]
 }
 
 export function CheckoutView({
@@ -54,10 +57,16 @@ export function CheckoutView({
   session,
   error,
   onContinue,
+  redirectOrigins,
 }: CheckoutViewProps) {
   const labels = { ...checkoutViewLabels, ...overrides }
   const done = session?.status === "succeeded"
-  const redirect = session ? checkoutRedirectURL(session) : null
+  const candidate = session ? checkoutRedirectCandidate(session) : null
+  const redirect = safeRedirectURL(candidate, {
+    allowedOrigins: redirectOrigins,
+  })
+  const unsafeRedirect =
+    !!candidate && !redirect && session?.status === "requires_action"
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (!submitting && !done) onSubmit()
@@ -131,6 +140,15 @@ export function CheckoutView({
                       : session.message}
         </p>
       ) : null}
+      {unsafeRedirect ? (
+        <p
+          className="orb-checkout__error"
+          data-notice="unsafe-redirect"
+          role="alert"
+        >
+          {labels.unsafeRedirect}
+        </p>
+      ) : null}
       {redirect && session?.status === "requires_action" ? (
         onContinue ? (
           <button
@@ -145,7 +163,7 @@ export function CheckoutView({
             {labels.continueToProvider}
           </a>
         )
-      ) : !done ? (
+      ) : !done && !unsafeRedirect ? (
         <button
           type="submit"
           className="orb-button orb-button--primary"

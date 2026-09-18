@@ -1,7 +1,12 @@
 // Mutation hooks. Dependent query keys are invalidated only after the
 // server accepted the operation (a 2xx, including 202 "queued"); a refused
 // or lost request invalidates nothing, so the cache never pretends a change
-// happened. The host's own onSuccess/onError run after ours.
+// happened. Automatic retry is always off, whatever the host QueryClient's
+// defaults: a retry would carry a new Idempotency-Key. After an
+// outcome-unknown failure the hook keeps that call's key and reuses it when
+// the host retries with identical variables, so a replay is the same
+// operation; any certain outcome clears it. The host's own onSuccess /
+// onError run after ours.
 import {
   useMutation,
   useQueryClient,
@@ -9,14 +14,15 @@ import {
   type UseMutationOptions,
   type UseMutationResult,
 } from "@tanstack/react-query"
+import { useRef } from "react"
 
 import type { Accepted, MutationOptions } from "../client"
-import type { BillingError } from "../core/errors"
+import { BillingError } from "../core/errors"
 import type {
+  CheckoutSessionID,
   PaymentMethodID,
   PriceID,
   SubscriptionID,
-  CheckoutSessionID,
 } from "../core/ids"
 import type {
   CancelSubscriptionRequest,
@@ -24,8 +30,8 @@ import type {
   ConfirmCheckoutSessionRequest,
   CreateCheckoutSessionRequest,
   CreatePaymentMethodRequest,
-  MutationOutcome,
   InvoicePayNowResult,
+  MutationOutcome,
   PayInvoiceNowRequest,
   PaymentMethod,
   QueuedResult,
@@ -40,12 +46,29 @@ import { useBilling, type BillingContextValue } from "./context"
 
 export type MutationOverrides<TData, TVariables> = Omit<
   UseMutationOptions<TData, BillingError, TVariables>,
-  "mutationFn"
+  "mutationFn" | "retry" | "retryDelay"
 >
 
 type Invalidate = (billing: BillingContextValue) => QueryKey[]
 
-function useBillingMutation<TData, TVariables>(
+// A stable fingerprint of the operation's terms: the variables without the
+// signal and key, with object keys sorted.
+function operationTerms(variables: MutationOptions & object): string {
+  const terms: Record<string, unknown> = { ...variables }
+  delete terms.signal
+  delete terms.idempotencyKey
+  return JSON.stringify(terms, (_name, value: unknown) =>
+    value && typeof value === "object" && !Array.isArray(value)
+      ? Object.fromEntries(
+          Object.entries(value as Record<string, unknown>).sort(([a], [b]) =>
+            a < b ? -1 : a > b ? 1 : 0
+          )
+        )
+      : value
+  )
+}
+
+function useBillingMutation<TData, TVariables extends MutationOptions & object>(
   mutationFn: (
     billing: BillingContextValue,
     variables: TVariables
@@ -55,9 +78,34 @@ function useBillingMutation<TData, TVariables>(
 ): UseMutationResult<TData, BillingError, TVariables> {
   const billing = useBilling()
   const queryClient = useQueryClient()
+  const unresolved = useRef<{ terms: string; key: string } | null>(null)
   return useMutation<TData, BillingError, TVariables>({
     ...overrides,
-    mutationFn: (variables) => mutationFn(billing, variables),
+    retry: false,
+    mutationFn: async (variables) => {
+      const terms = operationTerms(variables)
+      const pending = unresolved.current
+      const replay =
+        !variables.idempotencyKey && pending?.terms === terms
+          ? pending.key
+          : undefined
+      try {
+        const result = await mutationFn(
+          billing,
+          replay ? { ...variables, idempotencyKey: replay } : variables
+        )
+        unresolved.current = null
+        return result
+      } catch (error) {
+        unresolved.current =
+          error instanceof BillingError &&
+          error.isOutcomeUnknown &&
+          error.idempotencyKey
+            ? { terms, key: error.idempotencyKey }
+            : null
+        throw error
+      }
+    },
     onSuccess: async (data, variables, onMutateResult, context) => {
       await Promise.all(
         invalidates(billing).map((queryKey) =>

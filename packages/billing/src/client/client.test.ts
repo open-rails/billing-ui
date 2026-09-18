@@ -554,3 +554,21 @@ describe("#809 customer payment recovery", () => {
     expect(server.requests).toHaveLength(0)
   })
 })
+
+describe("decode failures on mutations", () => {
+  it("keep the key and are outcome-unknown: the server answered 2xx", async () => {
+    const { server, client } = setup()
+    server.route(
+      "POST",
+      `/v1/me/invoices/${invoicePayNow.invoice.id}/pay-now`,
+      () => json({ unexpected: true })
+    )
+    const error = await client
+      .payInvoiceNow(invoicePayNow.invoice.id, { payment_method_id: pmId })
+      .catch((e) => e)
+    expect(error.kind).toBe("invalid_response")
+    expect(error.method).toBe("POST")
+    expect(error.idempotencyKey).toBe("idem_1")
+    expect(error.isOutcomeUnknown).toBe(true)
+  })
+})

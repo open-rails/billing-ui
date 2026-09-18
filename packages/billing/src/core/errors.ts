@@ -67,16 +67,31 @@ export const ErrorCode = {
   // server
   internalError: "internal_error",
   serviceUnavailable: "service_unavailable",
-  // package-side (no server response)
+  // package-side (no usable server response)
   networkError: "network_error",
+  requestTimeout: "request_timeout",
+  requestAborted: "request_aborted",
+  responseBodyInterrupted: "response_body_interrupted",
   invalidResponse: "invalid_response",
+  notSignedIn: "not_signed_in",
 } as const
 export type ErrorCodeValue = (typeof ErrorCode)[keyof typeof ErrorCode]
 
-// Why a BillingError exists: an OpenRails response, a transport failure with
-// no response (which never proves the operation did not commit), or a body
-// the package could not validate against the contract.
-export type BillingErrorKind = "response" | "network" | "invalid_response"
+// Why a BillingError exists:
+// - response: OpenRails answered with an error envelope (or a bare status);
+// - network: no response arrived (connection loss or timeout);
+// - body: the response started but its body could not be read to the end;
+// - aborted: the caller cancelled a mutation after it was dispatched;
+// - invalid_response: a complete body that does not match the contract;
+// - unauthenticated: no credential, so nothing was sent.
+// Only a response proves what the server decided; see isOutcomeUnknown.
+export type BillingErrorKind =
+  | "response"
+  | "network"
+  | "body"
+  | "aborted"
+  | "invalid_response"
+  | "unauthenticated"
 
 export interface BillingErrorInit {
   kind: BillingErrorKind
@@ -90,6 +105,8 @@ export interface BillingErrorInit {
   retryAfterMs?: number
   method: string
   url: string
+  // The Idempotency-Key the mutation was sent under.
+  idempotencyKey?: string
   cause?: unknown
 }
 
@@ -104,6 +121,10 @@ export class BillingError extends Error {
   readonly retryAfterMs?: number
   readonly method: string
   readonly url: string
+  // The mutation's Idempotency-Key. After an outcome-unknown failure the
+  // caller must replay with exactly this key (the mutation hooks do so for
+  // an identical retry); a new key could execute the operation twice.
+  readonly idempotencyKey?: string
 
   constructor(init: BillingErrorInit) {
     super(init.message || init.code, { cause: init.cause })
@@ -118,6 +139,7 @@ export class BillingError extends Error {
     this.retryAfterMs = init.retryAfterMs
     this.method = init.method
     this.url = init.url
+    this.idempotencyKey = init.idempotencyKey
   }
 
   static fromResponse(
@@ -126,7 +148,8 @@ export class BillingError extends Error {
     status: number,
     body: unknown,
     retryAfterMs?: number,
-    headerRequestId?: string
+    headerRequestId?: string,
+    idempotencyKey?: string
   ): BillingError {
     const parsed = errorEnvelopeSchema.safeParse(body)
     if (parsed.success) {
@@ -143,6 +166,7 @@ export class BillingError extends Error {
         retryAfterMs,
         method,
         url,
+        idempotencyKey,
       })
     }
     return new BillingError({
@@ -155,11 +179,15 @@ export class BillingError extends Error {
       retryAfterMs,
       method,
       url,
+      idempotencyKey,
     })
   }
 
   get isUnauthorized(): boolean {
-    return this.kind === "response" && this.status === 401
+    return (
+      (this.kind === "response" && this.status === 401) ||
+      this.kind === "unauthenticated"
+    )
   }
   get isDenied(): boolean {
     return this.kind === "response" && this.status === 403
@@ -184,14 +212,31 @@ export class BillingError extends Error {
   get isIdempotencyReuse(): boolean {
     return this.code === ErrorCode.idempotencyKeyReused
   }
-  // A lost response: the operation may or may not have committed.
+  get isMutation(): boolean {
+    return this.method !== "" && this.method !== "GET"
+  }
+  // The operation may or may not have committed: a mutation whose response
+  // was lost, cut off, cancelled after dispatch, unreadable or a 5xx, or a
+  // server code that says so. Replay only with idempotencyKey.
   get isOutcomeUnknown(): boolean {
-    return (
-      this.kind === "network" ||
+    if (
       this.code === ErrorCode.providerOutcomeUnknown ||
       this.code === ErrorCode.invoiceRetryOutcomeUnknown ||
       this.code === ErrorCode.subscriptionRetryOutcomeUnknown
     )
+      return true
+    switch (this.kind) {
+      case "network":
+      case "body":
+        return true
+      case "aborted":
+      case "invalid_response":
+        return this.isMutation
+      case "response":
+        return this.isMutation && this.status >= 500
+      default:
+        return false
+    }
   }
 }
 

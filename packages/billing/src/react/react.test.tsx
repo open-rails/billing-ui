@@ -25,6 +25,7 @@ import {
 } from "./mutations"
 import {
   useInvoiceRecoverySettlement,
+  usePolledQuery,
   useSubscriptionRecoverySettlement,
   useSubscriptionSettlement,
 } from "./polling"
@@ -476,5 +477,274 @@ describe("#809 recovery hooks", () => {
     )
     expect(server.requests).toHaveLength(1)
     expect(server.requests[0].headers.get("Idempotency-Key")).toBe("idem_1")
+  })
+})
+
+// PR13 review findings 2, 3, 5 and 6.
+describe("mutation identity", () => {
+  it("does not inherit host automatic mutation retries with fresh operation keys", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        mutations: { retry: 3, retryDelay: 0 },
+        queries: { retry: false },
+      },
+    })
+    let n = 0
+    const server = fixtureServer()
+    server.route("POST", `/v1/me/subscriptions/${subId}/cancel`, () => {
+      throw new NetworkFailure()
+    })
+    const transport = createTransport({
+      baseUrl: "https://billing.example",
+      auth: bearerAuth("tok"),
+      fetch: server.fetch,
+      idempotencyKey: () => `generated-${++n}`,
+    })
+    const client = createBillingClient(transport)
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>
+        <BillingProvider client={client} merchant="acme" subject="user-1">
+          {children}
+        </BillingProvider>
+      </QueryClientProvider>
+    )
+    const { result } = renderHook(() => useCancelSubscription(), { wrapper })
+    await act(async () => {
+      await result.current
+        .mutateAsync({ id: subId, request: { feedback: "No longer needed" } })
+        .catch(() => undefined)
+    })
+    expect(
+      server.requests.map((r) => r.headers.get("Idempotency-Key"))
+    ).toEqual(["generated-1"])
+    await waitFor(() =>
+      expect(result.current.error?.idempotencyKey).toBe("generated-1")
+    )
+  })
+
+  it("reuses the key for an identical retry after an uncertain failure only", async () => {
+    let n = 0
+    const server = fixtureServer()
+    let outcome: "lost" | "ok" | "refused" = "lost"
+    server.route(
+      "POST",
+      `/v1/me/invoices/${invoicePayNow.invoice.id}/pay-now`,
+      () => {
+        if (outcome === "lost") throw new NetworkFailure()
+        if (outcome === "refused")
+          return errorEnvelope(409, "invoice_not_retryable")
+        return json({
+          ...invoicePayNow,
+          operation: { ...invoicePayNow.operation, status: "succeeded" },
+        })
+      }
+    )
+    const transport = createTransport({
+      baseUrl: "https://billing.example",
+      auth: bearerAuth("tok"),
+      fetch: server.fetch,
+      idempotencyKey: () => `generated-${++n}`,
+    })
+    const client = createBillingClient(transport)
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>
+        <BillingProvider client={client} merchant="acme" subject="user-1">
+          {children}
+        </BillingProvider>
+      </QueryClientProvider>
+    )
+    const { result } = renderHook(() => usePayInvoiceNow(), { wrapper })
+    const pay = (payment_method_id: string) =>
+      act(async () => {
+        await result.current
+          .mutateAsync({
+            invoiceId: invoicePayNow.invoice.id,
+            request: { payment_method_id: payment_method_id as typeof pmId },
+          })
+          .catch(() => undefined)
+      })
+    const keys = () =>
+      server.requests.map((r) => r.headers.get("Idempotency-Key"))
+
+    await pay(pmId) // lost
+    await pay(pmId) // identical retry: same operation
+    expect(keys()).toEqual(["generated-1", "generated-1"])
+    await pay("pm_eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee") // different terms: new operation
+    expect(keys()[2]).toBe("generated-2")
+    outcome = "ok"
+    await pay("pm_eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee") // replays generated-2 and succeeds
+    expect(keys()[3]).toBe("generated-2")
+    await pay("pm_eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee") // after success: a new operation
+    expect(keys()[4]).toBe("generated-3")
+    outcome = "refused"
+    await pay(pmId) // certain refusal clears it
+    await pay(pmId)
+    expect(keys().slice(5)).toEqual(["generated-4", "generated-5"])
+  })
+})
+
+describe("settlement freshness and scope", () => {
+  const invoiceId = invoicePayNow.invoice.id
+  const inFlight = { ...invoicePayNow.operation, status: "in_flight" as const }
+
+  it("does not settle a new 202 from the cached pre-action invoice", async () => {
+    const { server, wrapper, queryClient } = harness()
+    let release!: () => void
+    server.route(
+      "GET",
+      `/v1/me/invoices/${invoiceId}`,
+      () =>
+        new Promise<Response>((resolve) => {
+          release = () =>
+            resolve(
+              json({
+                ...invoicePayNow.invoice,
+                recovery: {
+                  ...invoicePayNow.invoice.recovery,
+                  operation: null,
+                },
+              })
+            )
+        })
+    )
+    const keys = billingKeys({
+      baseUrl: "https://billing.example",
+      merchant: "acme",
+      subject: "user-1",
+    })
+    // Pre-action cache: no live operation.
+    queryClient.setQueryData(keys.invoices.detail(invoiceId), {
+      ...invoicePayNow.invoice,
+      recovery: { ...invoicePayNow.invoice.recovery, operation: null },
+    })
+    const { result } = renderHook(
+      () =>
+        useInvoiceRecoverySettlement(invoiceId, inFlight, { intervalMs: 10 }),
+      { wrapper }
+    )
+    expect(result.current.settled).toBe(false)
+    expect(result.current.polling).toBe(true)
+    await waitFor(() => expect(server.requests).toHaveLength(1))
+    expect(result.current.settled).toBe(false)
+    // The fresh post-action read settles it.
+    await act(async () => release())
+    await waitFor(() => expect(result.current.settled).toBe(true))
+  })
+
+  it("does not run a settlement read while signed out", async () => {
+    const { server, wrapper } = harness({ subject: null })
+    server.route("GET", `/v1/me/invoices/${invoiceId}`, () =>
+      json(invoicePayNow.invoice)
+    )
+    const { result } = renderHook(
+      () => ({
+        invoice: useInvoiceRecoverySettlement(invoiceId, inFlight, {
+          intervalMs: 5,
+        }),
+        subscription: useSubscriptionRecoverySettlement(subId, inFlight, {
+          intervalMs: 5,
+        }),
+        predicate: useSubscriptionSettlement(subId, () => false, {
+          intervalMs: 5,
+        }),
+      }),
+      { wrapper }
+    )
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(server.requests).toHaveLength(0)
+    expect(result.current.invoice.polling).toBe(false)
+    expect(result.current.subscription.polling).toBe(false)
+    expect(result.current.predicate.polling).toBe(false)
+  })
+
+  it("stops polling when the credential goes away mid-settlement", async () => {
+    let token: string | null = "tok"
+    const { server, wrapper } = harness({ auth: bearerAuth(() => token) })
+    server.route("GET", `/v1/me/invoices/${invoiceId}`, () => {
+      token = null // signed out after the first read
+      return json(invoicePayNow.invoice)
+    })
+    const { result } = renderHook(
+      () =>
+        useInvoiceRecoverySettlement(invoiceId, inFlight, {
+          intervalMs: 5,
+          timeoutMs: 5_000,
+        }),
+      { wrapper }
+    )
+    await waitFor(() => expect(result.current.stopped).toBe(true))
+    expect(result.current.polling).toBe(false)
+    expect(result.current.query.error?.code).toBe("not_signed_in")
+    const sent = server.requests.length
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(server.requests).toHaveLength(sent)
+    expect(sent).toBe(1)
+  })
+
+  it("starts a fresh polling generation when the resource changes", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    )
+    const { result, rerender } = renderHook(
+      ({ id }) =>
+        usePolledQuery({
+          queryKey: ["resource", id],
+          queryFn: async () => ({ id }),
+          settled: () => false,
+          intervalMs: 5,
+          timeoutMs: 20,
+        }),
+      { initialProps: { id: "A" }, wrapper }
+    )
+    await waitFor(() => expect(result.current.timedOut).toBe(true))
+    rerender({ id: "B" })
+    expect(result.current.timedOut).toBe(false)
+    expect(result.current.polling).toBe(true)
+    await waitFor(() => expect(result.current.query.data).toEqual({ id: "B" }))
+    await waitFor(() => expect(result.current.timedOut).toBe(true))
+  })
+
+  it("starts a fresh generation when the subject changes", async () => {
+    const server = fixtureServer()
+    server.route("GET", `/v1/me/subscriptions/${subId}`, () =>
+      json(subscription)
+    )
+    const client = createBillingClient(
+      createTransport({
+        baseUrl: "https://billing.example",
+        auth: bearerAuth("tok"),
+        fetch: server.fetch,
+      })
+    )
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    let subject = "user-1"
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>
+        <BillingProvider client={client} merchant="acme" subject={subject}>
+          {children}
+        </BillingProvider>
+      </QueryClientProvider>
+    )
+    const { result, rerender } = renderHook(
+      () =>
+        useSubscriptionSettlement(subId, () => false, {
+          intervalMs: 5,
+          timeoutMs: 20,
+        }),
+      { wrapper }
+    )
+    await waitFor(() => expect(result.current.timedOut).toBe(true))
+    subject = "user-2"
+    rerender()
+    expect(result.current.timedOut).toBe(false)
+    expect(result.current.polling).toBe(true)
   })
 })

@@ -32,6 +32,7 @@ export {
   type SubscriptionStateLabels,
 } from "./labels"
 export {
+  checkoutRedirectCandidate,
   checkoutRedirectURL,
   defaultFormatDate,
   type DateFormatter,

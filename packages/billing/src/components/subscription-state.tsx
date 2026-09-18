@@ -1,3 +1,4 @@
+import { safeRedirectURL } from "../core/redirect"
 import type { Subscription } from "../core/schemas"
 import { subscriptionStateLabels, type SubscriptionStateLabels } from "./labels"
 import {
@@ -20,6 +21,8 @@ export interface SubscriptionStateProps {
   onChangePaymentMethod?: (subscription: Subscription) => void
   onChangePlan?: (subscription: Subscription) => void
   busy?: boolean
+  // Origins the cancel portal link may point to; without it no link renders.
+  redirectOrigins?: readonly string[]
 }
 
 // Which controls appear follows the DTO: `resumable`, `cancel_scheduled`,
@@ -37,6 +40,7 @@ export function SubscriptionState({
   onChangePaymentMethod,
   onChangePlan,
   busy = false,
+  redirectOrigins = [],
 }: SubscriptionStateProps) {
   const labels = { ...subscriptionStateLabels, ...overrides }
   const s = subscription
@@ -47,6 +51,9 @@ export function SubscriptionState({
   const showResume = !!onResume && s.resumable
   const price = s.price
   const scheduled = s.scheduled_price
+  const portal = safeRedirectURL(s.cancel_portal_url, {
+    allowedOrigins: redirectOrigins,
+  })
 
   return (
     <section
@@ -111,12 +118,8 @@ export function SubscriptionState({
       {external ? (
         <p className="orb-subscription__notice" data-notice="external-portal">
           {labels.managedExternally}{" "}
-          {s.cancel_portal_url ? (
-            <a
-              href={s.cancel_portal_url}
-              rel="noopener noreferrer"
-              target="_blank"
-            >
+          {portal ? (
+            <a href={portal} rel="noopener noreferrer" target="_blank">
               {labels.openPortal}
             </a>
           ) : null}

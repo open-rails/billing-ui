@@ -13,7 +13,6 @@ export default defineConfig({
     dts({
       include: ["src"],
       entryRoot: path.resolve(root, "src"),
-      pathsToAliases: false,
       exclude: ["src/**/*.test.*", "src/test/**"],
       tsconfigPath: path.resolve(root, "tsconfig.json"),
     }),
@@ -27,7 +26,6 @@ export default defineConfig({
         client: path.resolve(root, "src/client/index.ts"),
         react: path.resolve(root, "src/react/index.ts"),
         components: path.resolve(root, "src/components/index.ts"),
-        checkout: path.resolve(root, "src/checkout/index.ts"),
       },
       formats: ["es"],
     },
@@ -35,8 +33,6 @@ export default defineConfig({
     rollupOptions: {
       external: [
         "@tanstack/react-query",
-        "openrails-checkout",
-        "openrails-checkout/styles.css",
         "react",
         "react-dom",
         "react/jsx-runtime",

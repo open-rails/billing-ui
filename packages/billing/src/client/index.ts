@@ -103,8 +103,9 @@ function decode<T>(schema: z.ZodType<T>, response: RawResponse): T {
     code: ErrorCode.invalidResponse,
     message: `The billing service answered with an unexpected ${response.status} body`,
     requestId: response.requestId,
-    method: "",
+    method: response.method,
     url: response.url,
+    idempotencyKey: response.idempotencyKey,
     cause: parsed.error,
   })
 }
@@ -284,7 +285,12 @@ export function createBillingClient(transport: Transport): BillingClient {
     transport,
 
     async currencies(options) {
-      const response = await get("/v1/currencies", undefined, options)
+      const response = await transport.request({
+        method: "GET",
+        path: "/v1/currencies",
+        signal: options?.signal,
+        auth: "none",
+      })
       try {
         return parseCurrencyRegistry(response.body)
       } catch (cause) {

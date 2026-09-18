@@ -173,6 +173,7 @@ export interface CheckoutViewLabels {
   succeeded: string
   requiresAction: string
   continueToProvider: string
+  unsafeRedirect: string
   failed: string
   blocked: string
   expired: string
@@ -190,6 +191,8 @@ export const checkoutViewLabels: CheckoutViewLabels = {
   succeeded: "Payment complete.",
   requiresAction: "Continue with the payment provider to finish.",
   continueToProvider: "Continue",
+  unsafeRedirect:
+    "The payment provider link could not be verified. Contact support.",
   failed: "Payment failed.",
   blocked: "This purchase is not available for your account.",
   expired: "This checkout has expired.",

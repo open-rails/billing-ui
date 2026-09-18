@@ -52,9 +52,13 @@ export interface RequestSpec {
   // financial operation must pass the original.
   idempotencyKey?: string
   headers?: Record<string, string>
+  // "required" (default): without a credential nothing is sent and the call
+  // fails as not signed in. "none": public routes such as /v1/currencies.
+  auth?: "required" | "none"
 }
 
 export interface RawResponse {
+  method: HttpMethod
   status: number
   // Parsed JSON, or undefined for an empty body (204, 202 without a body).
   body: unknown
@@ -162,30 +166,45 @@ export function isAbortError(error: unknown): boolean {
 interface AttemptScope {
   signal: AbortSignal | undefined
   timedOut: boolean
+  // Rejects when the attempt is aborted (caller or timeout), for racing
+  // work fetch does not tie to the signal, such as a custom body stream.
+  aborted: Promise<never>
   settle(): void
 }
 
 // attemptScope follows the caller's signal and, when a timeout is set,
-// aborts the attempt on its own once the deadline passes.
+// aborts the attempt once the deadline passes. It lives until the response
+// body has been read to the end.
 function attemptScope(
   outer: AbortSignal | undefined,
   timeoutMs: number | undefined
 ): AttemptScope {
-  if (!timeoutMs) return { signal: outer, timedOut: false, settle() {} }
   const controller = new AbortController()
+  let timer: ReturnType<typeof setTimeout> | undefined
   const scope: AttemptScope = {
     signal: controller.signal,
     timedOut: false,
+    aborted: new Promise<never>((_resolve, reject) => {
+      controller.signal.addEventListener(
+        "abort",
+        () => reject(controller.signal.reason),
+        { once: true }
+      )
+    }),
     settle() {
       clearTimeout(timer)
       outer?.removeEventListener("abort", follow)
     },
   }
+  scope.aborted.catch(() => undefined)
   const follow = () => controller.abort(abortError(outer))
-  const timer = setTimeout(() => {
-    scope.timedOut = true
-    controller.abort(new DOMException("The request timed out", "TimeoutError"))
-  }, timeoutMs)
+  if (timeoutMs)
+    timer = setTimeout(() => {
+      scope.timedOut = true
+      controller.abort(
+        new DOMException("The request timed out", "TimeoutError")
+      )
+    }, timeoutMs)
   if (outer?.aborted) follow()
   else outer?.addEventListener("abort", follow, { once: true })
   return scope
@@ -195,15 +214,28 @@ function shouldRetryStatus(status: number): boolean {
   return status === 429 || (status >= 500 && status !== 501)
 }
 
-async function readBody(response: Response): Promise<unknown> {
+async function readBody(
+  response: Response,
+  aborted: Promise<never>
+): Promise<unknown> {
   if (response.status === 204 || response.status === 205) return undefined
-  const text = await response.text()
+  let text: string
+  try {
+    text = await Promise.race([response.text(), aborted])
+  } catch (error) {
+    void response.body?.cancel().catch(() => undefined)
+    throw new BodyReadFailure(error)
+  }
   if (!text) return undefined
   try {
     return JSON.parse(text) as unknown
   } catch {
     return text
   }
+}
+
+class BodyReadFailure {
+  constructor(readonly cause: unknown) {}
 }
 
 export function createTransport(options: TransportOptions): Transport {
@@ -284,68 +316,103 @@ export function createTransport(options: TransportOptions): Transport {
     if (spec.body !== undefined) headers["Content-Type"] = "application/json"
     if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey
 
-    // The caller's signal plus the per-attempt timeout, composed without
-    // AbortSignal.any/timeout so the package's browser floor stays at the
-    // exact-money one (Chrome 106 / Firefox 116 / Safari 15.4).
-    const attemptSignal = attemptScope(spec.signal, options.timeoutMs)
-
-    let response: Response
-    try {
-      response = await doFetch(finalUrl, {
-        method: spec.method,
-        headers,
-        body: spec.body === undefined ? undefined : JSON.stringify(spec.body),
-        credentials: auth.credentials,
-        signal: attemptSignal.signal,
-        redirect: "error",
-      })
-    } catch (cause) {
-      if (spec.signal?.aborted) throw cause
-      if (attemptSignal.timedOut)
-        throw new BillingError({
-          kind: "network",
-          status: 0,
-          code: ErrorCode.networkError,
-          message: `The billing service did not answer within ${options.timeoutMs}ms`,
-          method: spec.method,
-          url: finalUrl,
-          cause,
-        })
-      throw new BillingError({
-        kind: "network",
+    const failure = (
+      kind: "network" | "body" | "aborted",
+      code: string,
+      message: string,
+      cause: unknown
+    ) =>
+      new BillingError({
+        kind,
         status: 0,
-        code: ErrorCode.networkError,
-        message: "The billing service could not be reached",
+        code,
+        message,
         method: spec.method,
         url: finalUrl,
+        idempotencyKey,
         cause,
       })
-    } finally {
-      attemptSignal.settle()
-    }
-    const body = await readBody(response)
-    const requestId = response.headers.get("X-Request-ID") ?? undefined
-    const retryAfterMs = parseRetryAfter(
-      response.headers.get("Retry-After"),
-      now()
-    )
-    if (!response.ok)
-      throw BillingError.fromResponse(
-        spec.method,
-        finalUrl,
-        response.status,
-        body,
-        retryAfterMs,
-        requestId
+
+    // The caller's signal plus the per-attempt timeout, composed without
+    // AbortSignal.any/timeout (browser floor: the exact-money one), kept
+    // alive until the body has been read.
+    const scope = attemptScope(spec.signal, options.timeoutMs)
+    let dispatched = false
+    try {
+      const response = await Promise.race([
+        doFetch(finalUrl, {
+          method: spec.method,
+          headers,
+          body: spec.body === undefined ? undefined : JSON.stringify(spec.body),
+          credentials: auth.credentials,
+          signal: scope.signal,
+          redirect: "error",
+        }),
+        scope.aborted,
+      ])
+      dispatched = true
+      const body = await readBody(response, scope.aborted)
+      const requestId = response.headers.get("X-Request-ID") ?? undefined
+      const retryAfterMs = parseRetryAfter(
+        response.headers.get("Retry-After"),
+        now()
       )
-    return {
-      status: response.status,
-      body,
-      headers: response.headers,
-      requestId,
-      retryAfterMs,
-      url: finalUrl,
-      idempotencyKey,
+      if (!response.ok)
+        throw BillingError.fromResponse(
+          spec.method,
+          finalUrl,
+          response.status,
+          body,
+          retryAfterMs,
+          requestId,
+          idempotencyKey
+        )
+      return {
+        method: spec.method,
+        status: response.status,
+        body,
+        headers: response.headers,
+        requestId,
+        retryAfterMs,
+        url: finalUrl,
+        idempotencyKey,
+      }
+    } catch (error) {
+      if (error instanceof BillingError) throw error
+      const cause = error instanceof BodyReadFailure ? error.cause : error
+      if (scope.timedOut)
+        throw failure(
+          dispatched ? "body" : "network",
+          ErrorCode.requestTimeout,
+          `The billing service did not finish within ${options.timeoutMs}ms`,
+          cause
+        )
+      if (spec.signal?.aborted) {
+        // A cancelled read is just cancelled; a cancelled mutation may
+        // already have reached the server, so it keeps its key.
+        if (!isMutation(spec.method)) throw cause
+        throw failure(
+          "aborted",
+          ErrorCode.requestAborted,
+          "The request was cancelled after it was sent",
+          cause
+        )
+      }
+      if (error instanceof BodyReadFailure)
+        throw failure(
+          "body",
+          ErrorCode.responseBodyInterrupted,
+          "The billing service response was cut off",
+          cause
+        )
+      throw failure(
+        "network",
+        ErrorCode.networkError,
+        "The billing service could not be reached",
+        cause
+      )
+    } finally {
+      scope.settle()
     }
   }
 
@@ -358,7 +425,18 @@ export function createTransport(options: TransportOptions): Transport {
     if (idempotencyKey !== undefined && !isValidIdempotencyKey(idempotencyKey))
       throw new Error("billing: Idempotency-Key must be 1–255 bytes")
     const attempts = mutation ? 1 : Math.max(1, retry.attempts)
-    let credential = await options.auth.credential()
+    let credential =
+      spec.auth === "none" ? null : await options.auth.credential()
+    if (spec.auth !== "none" && !credential)
+      throw new BillingError({
+        kind: "unauthenticated",
+        status: 401,
+        code: ErrorCode.notSignedIn,
+        message: "No billing credential: sign in first",
+        method: spec.method,
+        url: finalUrl,
+        idempotencyKey,
+      })
     let refreshed = false
 
     for (let n = 1; ; n++) {
@@ -368,7 +446,12 @@ export function createTransport(options: TransportOptions): Transport {
         if (!(error instanceof BillingError)) throw error
         // One refresh replay. A 401 is refused before any handler runs, so
         // replaying a mutation with the same key cannot double-execute it.
-        if (error.isUnauthorized && !refreshed && options.auth.refresh) {
+        if (
+          error.kind === "response" &&
+          error.status === 401 &&
+          !refreshed &&
+          options.auth.refresh
+        ) {
           refreshed = true
           const fresh = await options.auth.refresh(credential)
           if (fresh) {
@@ -382,7 +465,9 @@ export function createTransport(options: TransportOptions): Transport {
           !mutation &&
           n < attempts &&
           !spec.signal?.aborted &&
-          (error.kind === "network" || shouldRetryStatus(error.status))
+          (error.kind === "network" ||
+            error.kind === "body" ||
+            (error.kind === "response" && shouldRetryStatus(error.status)))
         if (!retryable) throw error
         const backoff = Math.min(
           retry.maxDelayMs,

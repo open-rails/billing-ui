@@ -47,10 +47,6 @@
       "types": "./dist/components/index.d.ts",
       "import": "./dist/components.js"
     },
-    "./checkout": {
-      "types": "./dist/checkout/index.d.ts",
-      "import": "./dist/checkout.js"
-    },
     "./package.json": "./package.json"
   },
   "main": "./dist/index.js",
@@ -69,15 +65,11 @@
   },
   "peerDependencies": {
     "@tanstack/react-query": ">=5.90 <6",
-    "openrails-checkout": ">=0.3.0",
     "react": ">=19 <20",
     "react-dom": ">=19 <20"
   },
   "peerDependenciesMeta": {
     "@tanstack/react-query": {
-      "optional": true
-    },
-    "openrails-checkout": {
       "optional": true
     },
     "react": {
@@ -99,7 +91,6 @@
     "@types/react-dom": "^19.2.4",
     "@vitejs/plugin-react": "^6.0.5",
     "jsdom": "^30.0.1",
-    "openrails-checkout": "workspace:*",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "typescript": "^5.9.3",

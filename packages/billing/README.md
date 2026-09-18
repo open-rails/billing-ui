@@ -42,12 +42,18 @@ OpenRails fixtures in `src/test/fixtures/wire`.
 `createTransport({ baseUrl, auth, fetch?, credentials?, headers?, retry?,
 timeoutMs? })` gives one `request` function. `AuthProvider.credential()` is
 asked per request (Bearer, DPoP with a fresh ES256 proof whose `htu` is the
-final URL, or the host's cookie contract); `refresh()` runs once on a 401 and
-the request is replayed with the same `Idempotency-Key`. Cross-origin
-`credentials` defaults to `omit`. GETs retry network / 5xx / 429 with
-`Retry-After`; mutations never retry. Errors are `BillingError` with
-`status`, `code`, `param`, `requestId`, `metadata`, `retryAfterMs` and
-`kind` (`response`, `network` = outcome unknown, `invalid_response`).
+final URL, or the host's cookie contract); with no credential nothing is sent
+(`not_signed_in`). `refresh()` runs once on a 401 and the request is replayed
+with the same `Idempotency-Key`. Cross-origin `credentials` defaults to
+`omit`. Timeout and cancellation cover the whole attempt, body included. GETs
+retry network / body / 5xx / 429 with `Retry-After`; mutations never retry.
+
+Errors are `BillingError` with `status`, `code`, `param`, `requestId`,
+`metadata`, `retryAfterMs`, `idempotencyKey` and `kind`: `response`,
+`network`, `body` (response cut off, `response_body_interrupted`), `aborted`
+(mutation cancelled after dispatch), `invalid_response`, `unauthenticated`.
+`isOutcomeUnknown` marks a mutation that may have committed (lost, cut off,
+cancelled, unreadable, 5xx): replay it only with `error.idempotencyKey`.
 
 ## `client`
 
@@ -83,10 +89,15 @@ Read hooks (`useBillingStatus`, `useSubscriptions`, `useSubscription`,
 `usePaymentMethods`, `usePayments`, `useInvoices`, `useInvoice`,
 `useNotifications`, `useUnreadNotificationCount`, `useCheckoutSession`,
 `useActiveEntitlements`, `useCurrencies`, `useMoney`) are disabled without a
-subject. Mutation hooks invalidate dependent keys only after an accepted
-response. `useSubscriptionSettlement`/`useInvoiceSettlement`/
+subject. Mutation hooks never retry (whatever the host QueryClient's
+defaults), invalidate dependent keys only after an accepted response, and
+reuse the key of an outcome-unknown call when the host retries with identical
+variables. `useSubscriptionSettlement`/`useInvoiceSettlement`/
 `usePaymentMethodSettlement` poll after a 202 until a predicate holds, with
-a timeout; `useInvoiceRecoverySettlement(invoiceId, operation)` and
+a timeout. Every polling generation reads under its own cache entry, so
+settlement is judged only from a read fetched after the action; it restarts
+when the resource, operation or subject changes and stops when signed out or
+on 401/403/404; `useInvoiceRecoverySettlement(invoiceId, operation)` and
 `useSubscriptionRecoverySettlement(id, operation)` poll a #809 202 by the
 resource's `recovery.operation` and invalidate the invoice, its `/payments`
 attempts and the status once it resolves. `usePayInvoiceNow`,
@@ -103,8 +114,11 @@ eligibility: pay-now / retry-now controls appear only when the server reports
 `recovery.retryable` and no operation is unresolved; `blocked_reason`, 402
 declines and 409 codes map to replaceable labels.
 
-## `checkout`
+Server URLs are navigated only through `safeRedirectURL(url, {
+allowedOrigins })`: absolute https, no credentials, origin on the host's list.
+`CheckoutView` requires `redirectOrigins` and refuses any other provider hop;
+`SubscriptionState` renders the cancel-portal link only with an allowed
+`redirectOrigins`.
 
-Re-exports `openrails-checkout` (the hosted checkout flow) until the direct
-`/v1/me/checkout` flow is qualified and the component moves in here.
-Requires the optional peer `openrails-checkout`.
+The hosted checkout flow is not part of this package yet; it moves in only
+after the direct `/v1/me/checkout` contract is qualified.

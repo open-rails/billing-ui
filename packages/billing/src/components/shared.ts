@@ -3,6 +3,7 @@
 // replaces through `labels`. Every figure comes from the server DTO; nothing
 // here decides eligibility.
 import type { Amount, FormatMoneyOptions } from "../core/money"
+import { safeRedirectURL, type RedirectPolicy } from "../core/redirect"
 import type { CheckoutSession } from "../core/schemas"
 
 export interface MoneyFormatter {
@@ -48,8 +49,18 @@ export function expiryLabel(
   return `${String(month).padStart(2, "0")}/${String(year).slice(-2)}`
 }
 
-// The provider hop a requires_action session asks for, if any.
-export function checkoutRedirectURL(session: CheckoutSession): string | null {
+// The provider hop a requires_action session asks for, validated against the
+// host's redirect policy: null when there is none or it is not allowed.
+export function checkoutRedirectURL(
+  session: CheckoutSession,
+  policy: RedirectPolicy
+): string | null {
+  return safeRedirectURL(checkoutRedirectCandidate(session), policy)
+}
+
+export function checkoutRedirectCandidate(
+  session: CheckoutSession
+): string | null {
   return (
     session.next_action?.redirect_to_url?.url ||
     session.payment.redirect_url ||
