@@ -20,7 +20,6 @@ if (theme === "inherit") {
   host.textContent = `:root{--card:rgb(250, 240, 230);--foreground:rgb(20, 10, 0)}
     :root.dark{--card:rgb(30, 20, 10);--foreground:rgb(240, 230, 220)}`
   document.head.append(host)
-  document.documentElement.classList.toggle("dark", params.has("dark"))
 }
 document.body.style.margin = "0"
 

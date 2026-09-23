@@ -136,6 +136,6 @@ test("inherits the host page's palette and dark class", async ({
       )
   await open(page, user.access_token, "inherit")
   expect(await cardBackground()).toBe("rgb(250, 240, 230)")
-  await open(page, user.access_token, "inherit&dark")
+  await page.evaluate(() => document.documentElement.classList.add("dark"))
   expect(await cardBackground()).toBe("rgb(30, 20, 10)")
 })
