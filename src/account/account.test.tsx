@@ -69,7 +69,7 @@ describe("AccountBilling", () => {
     expect(sub).toHaveTextContent("Pro")
     expect(sub).toHaveTextContent("Active")
     await waitFor(() => expect(sub).toHaveTextContent("$9.99 every month"))
-    expect(sub).toHaveTextContent(/Renews Sep 1[56], 2026/)
+    expect(sub).toHaveTextContent("Renews Sep 16, 2036")
     expect(sub).toHaveTextContent("Visa •••• 4242")
 
     const card = await screen.findByTestId("payment-method-row")
@@ -135,7 +135,7 @@ describe("SubscriptionsPanel", () => {
     )
     expect(await screen.findByText("Cancellation requested.")).toBeVisible()
     await waitFor(() => expect(row).toHaveTextContent("Ending"))
-    expect(row).toHaveTextContent(/Access until Sep 1[56], 2026/)
+    expect(row).toHaveTextContent("Access until Sep 16, 2036")
 
     fireEvent.click(within(row).getByRole("button", { name: "Resume" }))
     await waitFor(() => expect(row).toHaveTextContent("Active"))

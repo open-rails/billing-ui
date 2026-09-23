@@ -29,7 +29,7 @@ import type { Translator } from "#orck/i18n/messages"
 import { usePaymentMethods } from "#orck/react/hooks"
 import { useScopeProps } from "#orck/scope-context"
 import { TokenizedCardForm } from "#orck/tokenized-card-form"
-import { brandName, expiry } from "./format"
+import { brandName, expiry, RESET } from "./format"
 import { EmptyState, ErrorState, ListSkeleton, Section } from "./section"
 import { useNotice } from "./notice"
 import { BillingStatusBadge } from "./status-badge"
@@ -146,7 +146,7 @@ export function PaymentMethodsPanel({
                 brand={method.card?.brand ?? undefined}
                 fallback={(method.card?.brand ?? "card").slice(0, 4)}
               />
-              <div className="grid min-w-0 flex-1 gap-0.5">
+              <div className="grid min-w-40 flex-1 gap-0.5">
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                   <span className="text-sm font-medium tabular-nums">
                     {label}
@@ -176,11 +176,12 @@ export function PaymentMethodsPanel({
                   </p>
                 ) : null}
               </div>
-              <div className="flex items-center gap-1">
+              <div className="ml-auto flex items-center gap-1">
                 {currency && !defaults.includes(currency) ? (
                   <Button
                     variant="ghost"
                     size="sm"
+                    className="text-muted-foreground"
                     disabled={!!pending}
                     onClick={() => void makeDefault(method)}
                   >
@@ -261,7 +262,7 @@ export function PaymentMethodsPanel({
         }}
       >
         <AlertDialogContent
-          className={`${scope.className} bg-popover text-popover-foreground`}
+          className={`${scope.className} ${RESET} bg-popover text-popover-foreground`}
           data-orck-theme={scope["data-orck-theme"]}
           style={scope.style}
         >
@@ -303,7 +304,7 @@ export function PaymentMethodsPanel({
           }}
         >
           <DialogContent
-            className={`${scope.className} max-h-[calc(100dvh-2rem)] overflow-y-auto bg-popover text-popover-foreground`}
+            className={`${scope.className} ${RESET} max-h-[calc(100dvh-2rem)] overflow-y-auto bg-popover text-popover-foreground`}
             data-orck-theme={scope["data-orck-theme"]}
             style={scope.style}
             showCloseButton={!state.adding}

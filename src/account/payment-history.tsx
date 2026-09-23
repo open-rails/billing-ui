@@ -6,11 +6,8 @@ import type { Payment } from "#orck/client/types"
 import { Button } from "#orck/components/ui/button"
 import { useMessages } from "#orck/i18n/context"
 import type { MessageKey, Translator } from "#orck/i18n/messages"
-import {
-  useCurrencies,
-  usePayments,
-  type PaymentsOptions,
-} from "#orck/react/hooks"
+import { usePayments, type PaymentsOptions } from "#orck/react/hooks"
+import { useBillingClient } from "#orck/react/context"
 import { useUiSettings } from "#orck/scope-context"
 import { brandName, formatDate, formatMoney } from "./format"
 import { EmptyState, ErrorState, ListSkeleton, Section } from "./section"
@@ -39,7 +36,7 @@ export function PaymentHistory({
   const { t } = m
   const { locale } = useUiSettings()
   const state = usePayments(options)
-  const { scales } = useCurrencies()
+  const scales = useBillingClient().currencies
 
   let body: React.ReactNode
   const payments = state.payments

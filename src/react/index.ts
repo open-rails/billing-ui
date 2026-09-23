@@ -6,7 +6,6 @@ export {
   type BillingContextValue,
 } from "./context"
 export {
-  useCurrencies,
   usePaymentMethods,
   usePayments,
   useSubscriptions,

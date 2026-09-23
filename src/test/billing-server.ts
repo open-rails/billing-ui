@@ -20,6 +20,7 @@ export function subscription(overrides: Partial<Row> = {}): Row {
     ...subscriptionFixture,
     payments: undefined,
     cancel_portal_url: undefined,
+    current_period_ends_at: "2036-09-16T12:00:00Z",
     price: {
       ...subscriptionFixture.price,
       unit_amount: "9990000",
@@ -116,11 +117,6 @@ export function fakeBilling(
       const offset = Number(url.searchParams.get("offset") ?? 0)
       let m: RegExpMatchArray | null
 
-      if (key === "GET /currencies")
-        return json(200, {
-          object: "currencies",
-          currencies: [{ code: "USD", decimals: 6, minor_decimals: 2 }],
-        })
       if (key === "GET /me/subscriptions")
         return json(
           200,
@@ -143,7 +139,11 @@ export function fakeBilling(
         queued.push({
           reads: state.lag,
           apply: () =>
-            Object.assign(sub, { cancel_scheduled: true, resumable: true }),
+            Object.assign(sub, {
+              status: "cancelled",
+              cancel_scheduled: true,
+              resumable: true,
+            }),
         })
         return json(202, { status: "queued" })
       }
@@ -153,7 +153,11 @@ export function fakeBilling(
         queued.push({
           reads: state.lag,
           apply: () =>
-            Object.assign(sub, { cancel_scheduled: false, resumable: false }),
+            Object.assign(sub, {
+              status: "active",
+              cancel_scheduled: false,
+              resumable: false,
+            }),
         })
         return json(202, { status: "queued" })
       }

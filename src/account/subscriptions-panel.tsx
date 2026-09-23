@@ -9,11 +9,8 @@ import type { Subscription } from "#orck/client/types"
 import { Button, buttonVariants } from "#orck/components/ui/button"
 import { Spinner } from "#orck/components/ui/spinner"
 import { useMessages } from "#orck/i18n/context"
-import {
-  useCurrencies,
-  useSubscriptions,
-  type SubscriptionsOptions,
-} from "#orck/react/hooks"
+import { useSubscriptions, type SubscriptionsOptions } from "#orck/react/hooks"
+import { useBillingClient } from "#orck/react/context"
 import { useUiSettings } from "#orck/scope-context"
 import { CancelSubscriptionDialog } from "./cancel-dialog"
 import {
@@ -21,7 +18,9 @@ import {
   formatDate,
   formatMoney,
   intervalLabel,
+  isEnding,
   isLive,
+  LIVE_STATUSES,
   subscriptionName,
 } from "./format"
 import { EmptyState, ErrorState, ListSkeleton, Section } from "./section"
@@ -51,7 +50,7 @@ export function SubscriptionsPanel({
   const { t } = m
   const { locale, navigate } = useUiSettings()
   const state = useSubscriptions(options)
-  const { scales } = useCurrencies()
+  const scales = useBillingClient().currencies
   const [cancelling, setCancelling] = React.useState<Subscription | null>(null)
   const [rowError, setRowError] = React.useState<{
     id: string
@@ -116,7 +115,7 @@ export function SubscriptionsPanel({
             s.ended_at ?? s.cancelled_at ?? s.current_period_ends_at,
             locale
           )
-          const scheduled = live && !!s.cancel_scheduled
+          const scheduled = isEnding(s)
           const renews = live && !scheduled && s.price?.auto_renew !== false
           const when = !live
             ? endedAt && t("subscriptions.endedOn", { date: endedAt })
@@ -138,7 +137,7 @@ export function SubscriptionsPanel({
                 : null
           const portal = live && !scheduled ? s.cancel_portal_url : null
           const canCancel =
-            live &&
+            LIVE_STATUSES.has(s.status) &&
             !scheduled &&
             !portal &&
             (s.rail !== "solana" || !!sendSolanaTransaction)

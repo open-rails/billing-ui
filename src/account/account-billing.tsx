@@ -2,6 +2,7 @@ import { cn } from "cn"
 
 import type { CheckoutAppearance } from "#orck/appearance"
 import type { SendSolanaTransaction } from "#orck/client/client"
+import { BillingUiRoot } from "#orck/scope"
 import { PaymentHistory } from "./payment-history"
 import {
   PaymentMethodsPanel,
@@ -30,7 +31,11 @@ export function AccountBilling({
   className,
 }: AccountBillingProps) {
   return (
-    <div className={cn("grid gap-6", className)} data-testid="account-billing">
+    <BillingUiRoot
+      appearance={appearance}
+      className={cn("grid gap-6", className)}
+      data-testid="account-billing"
+    >
       <SubscriptionsPanel
         sendSolanaTransaction={sendSolanaTransaction}
         plansHref={plansHref}
@@ -42,6 +47,6 @@ export function AccountBilling({
         appearance={appearance}
       />
       <PaymentHistory pageSize={historyPageSize} appearance={appearance} />
-    </div>
+    </BillingUiRoot>
   )
 }

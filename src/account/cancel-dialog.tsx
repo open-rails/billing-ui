@@ -22,6 +22,7 @@ import { Textarea } from "#orck/components/ui/textarea"
 import { useMessages } from "#orck/i18n/context"
 import type { SubscriptionAction } from "#orck/react/hooks"
 import { useScopeProps } from "#orck/scope-context"
+import { RESET } from "./format"
 
 // Key it per subscription so each opening starts blank.
 export interface CancelSubscriptionDialogProps {
@@ -88,7 +89,7 @@ export function CancelSubscriptionDialog({
       }}
     >
       <AlertDialogContent
-        className={`${scope.className} bg-popover text-popover-foreground`}
+        className={`${scope.className} ${RESET} bg-popover text-popover-foreground`}
         data-orck-theme={scope["data-orck-theme"]}
         style={scope.style}
       >
@@ -121,6 +122,7 @@ export function CancelSubscriptionDialog({
                 disabled={busy}
                 required
                 rows={3}
+                className="[font:inherit]"
                 onChange={(event) => setFeedback(event.target.value)}
                 onBlur={() => length > 0 && setTouched(true)}
               />

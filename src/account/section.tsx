@@ -15,6 +15,7 @@ import {
 import { Skeleton } from "#orck/components/ui/skeleton"
 import { useMessages } from "#orck/i18n/context"
 import { useScopeProps } from "#orck/scope-context"
+import { RESET } from "./format"
 
 export interface SectionProps {
   title: string
@@ -41,7 +42,7 @@ export function Section({
   return (
     <section
       aria-labelledby={id}
-      className={cn(scope.className, "block", className)}
+      className={cn(scope.className, RESET, "block", className)}
       data-orck-theme={scope["data-orck-theme"]}
       style={scope.style}
       data-testid={rest["data-testid"]}

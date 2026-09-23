@@ -207,15 +207,6 @@ export const billingStatusSchema = z.object({
 })
 export type BillingStatus = z.infer<typeof billingStatusSchema>
 
-export const currenciesSchema = z.object({
-  currencies: z.array(
-    z.object({
-      code: z.string(),
-      decimals: z.number(),
-      minor_decimals: z.number().nullish(),
-    })
-  ),
-})
 /** Currency code (upper case) to its native-unit scale. */
 export type CurrencyScales = Readonly<Record<string, number>>
 

@@ -1,9 +1,9 @@
 import type { z } from "zod"
 
 import { BillingError, localError, readBillingError } from "./errors"
+import { OPENRAILS_CURRENCY_SCALES } from "./generated/openrails-version"
 import {
   billingStatusSchema,
-  currenciesSchema,
   invoicePageSchema,
   invoiceSchema,
   pageSchema,
@@ -34,7 +34,10 @@ export interface BillingClientOptions {
     string | null | undefined | Promise<string | null | undefined>
   /** Sent as Accept-Language. */
   language?: () => string | null | undefined
-  /** Skips GET /currencies (code -> native-unit decimals). */
+  /**
+   * Extra or overriding currency scales (code -> native-unit decimals). The
+   * pinned OpenRails registry is built in; `/me` amounts carry no scale.
+   */
   currencies?: CurrencyScales
 }
 
@@ -77,9 +80,10 @@ export function createBillingClient(options: BillingClientOptions = {}) {
   const base = (options.baseUrl ?? "/billing/v1").replace(/\/+$/, "")
   const doFetch =
     options.fetch ?? ((...a: Parameters<typeof fetch>) => fetch(...a))
-  let currencies: Promise<CurrencyScales> | null = options.currencies
-    ? Promise.resolve(normalizeScales(options.currencies))
-    : null
+  const currencies = normalizeScales({
+    ...OPENRAILS_CURRENCY_SCALES,
+    ...options.currencies,
+  })
 
   function url(path: string, query?: Query): string {
     const qs = new URLSearchParams()
@@ -316,20 +320,8 @@ export function createBillingClient(options: BillingClientOptions = {}) {
       return json(billingStatusSchema, "/me/status", { signal })
     },
 
-    /** Currency scale registry, fetched once per client. */
-    currencies(): Promise<CurrencyScales> {
-      currencies ??= json(currenciesSchema, "/currencies").then(
-        (r) =>
-          normalizeScales(
-            Object.fromEntries(r.currencies.map((c) => [c.code, c.decimals]))
-          ),
-        (err: unknown) => {
-          currencies = null
-          throw err
-        }
-      )
-      return currencies
-    },
+    /** Currency code (upper case) to native-unit decimals. */
+    currencies,
   }
 }
 

@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useState } from "react"
 
 import type { SendSolanaTransaction, SolanaCancelStage } from "../client/client"
 import { toBillingError, type BillingError } from "../client/errors"
 import type {
-  CurrencyScales,
   NewCard,
   Payment,
   PaymentMethod,
@@ -354,31 +353,4 @@ export function usePayments(options: PaymentsOptions = {}): PaymentsState {
     previous: useCallback(() => setPage((p) => Math.max(0, p - 1)), []),
     refetch: remote.refetch,
   }
-}
-
-/** GET /currencies once per client: code -> native-unit decimals. */
-export function useCurrencies(): {
-  scales: CurrencyScales | null
-  error: BillingError | null
-} {
-  const { client } = useBillingContext()
-  const [state, setState] = useState<{
-    client: unknown
-    scales: CurrencyScales | null
-    error: BillingError | null
-  }>({ client: null, scales: null, error: null })
-  useEffect(() => {
-    let live = true
-    client.currencies().then(
-      (scales) => live && setState({ client, scales, error: null }),
-      (err: unknown) =>
-        live && setState({ client, scales: null, error: toBillingError(err) })
-    )
-    return () => {
-      live = false
-    }
-  }, [client])
-  return state.client === client
-    ? { scales: state.scales, error: state.error }
-    : { scales: null, error: null }
 }

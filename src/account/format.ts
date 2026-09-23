@@ -25,11 +25,11 @@ export function formatDate(
 export function formatMoney(
   amount: string | null | undefined,
   currency: string,
-  scales: CurrencyScales | null,
+  scales: CurrencyScales,
   locale?: string
 ): string | null {
   if (!amount) return null
-  const decimals = scales?.[currency.toUpperCase()]
+  const decimals = scales[currency.toUpperCase()]
   if (decimals === undefined) return null
   return formatAmount(amount, currency, decimals, locale)
 }
@@ -72,7 +72,19 @@ export function expiry(card: CardSummary | null | undefined): string | null {
 
 export const LIVE_STATUSES = new Set(["active", "pending", "past_due"])
 
-export const isLive = (s: Subscription) => LIVE_STATUSES.has(s.status)
+const future = (at: string | null | undefined) =>
+  !!at && new Date(at).getTime() > Date.now()
+
+/** Still grants access: live, or cancelled with the paid period running. */
+export const isLive = (s: Subscription) =>
+  LIVE_STATUSES.has(s.status) ||
+  (s.status === "cancelled" &&
+    (!!s.cancel_scheduled || !!s.resumable) &&
+    future(s.current_period_ends_at))
+
+/** Access ends at period end and nothing renews it. */
+export const isEnding = (s: Subscription) =>
+  isLive(s) && (!!s.cancel_scheduled || s.status === "cancelled")
 
 export type StatusTone = "success" | "warning" | "destructive" | "neutral"
 
@@ -96,3 +108,7 @@ const TONE: Record<string, StatusTone> = {
 
 export const statusTone = (status: string): StatusTone =>
   TONE[status] ?? "neutral"
+
+// The package ships no preflight, so account surfaces zero UA text margins.
+export const RESET =
+  "[&_h2]:m-0 [&_p]:m-0 [&_ul]:m-0 [&_ul]:list-none [&_ul]:p-0 [&_table]:border-spacing-0"

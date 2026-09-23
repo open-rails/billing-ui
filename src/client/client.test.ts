@@ -2,12 +2,7 @@ import { describe, expect, it, vi } from "vitest"
 
 import errorFixture from "../test/fixtures/wire/error_envelope.json"
 import subscriptionFixture from "../test/fixtures/wire/subscription.json"
-import {
-  apiError,
-  fakeBilling,
-  json,
-  subscription,
-} from "../test/billing-server"
+import { fakeBilling, json, subscription } from "../test/billing-server"
 import { createBillingClient, WalletRejectedError } from "./client"
 import { BillingError } from "./errors"
 import { subscriptionSchema } from "./types"
@@ -93,18 +88,9 @@ describe("createBillingClient", () => {
     await expect(client.removePaymentMethod("pm_1")).resolves.toBe("pending")
   })
 
-  it("caches the currency registry and retries after a failure", async () => {
-    const fetch = vi
-      .fn<typeof globalThis.fetch>()
-      .mockResolvedValueOnce(apiError(503, "service_unavailable"))
-      .mockResolvedValue(
-        json(200, { currencies: [{ code: "usd", decimals: 6 }] })
-      )
-    const client = createBillingClient({ fetch })
-    await expect(client.currencies()).rejects.toBeInstanceOf(BillingError)
-    await expect(client.currencies()).resolves.toEqual({ USD: 6 })
-    await client.currencies()
-    expect(fetch).toHaveBeenCalledTimes(2)
+  it("carries the pinned currency registry, extendable by the host", () => {
+    const client = createBillingClient({ currencies: { btc: 8 } })
+    expect(client.currencies).toMatchObject({ USD: 6, JPY: 4, BTC: 8 })
   })
 
   it("runs the Solana cancel loop and maps a declined wallet", async () => {
