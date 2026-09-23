@@ -28,7 +28,7 @@ export interface BillingClientOptions {
    * Transport. Pass an authenticating fetch (auth-ui's `client.authFetch`)
    * or combine the default with `getToken`.
    */
-  fetch?: typeof fetch
+  fetch?: (input: string, init: RequestInit) => Promise<Response>
   /** Bearer for each request; omit when `fetch` authenticates. */
   getToken?: () =>
     string | null | undefined | Promise<string | null | undefined>
@@ -79,7 +79,7 @@ interface RequestOptions {
 export function createBillingClient(options: BillingClientOptions = {}) {
   const base = (options.baseUrl ?? "/billing/v1").replace(/\/+$/, "")
   const doFetch =
-    options.fetch ?? ((...a: Parameters<typeof fetch>) => fetch(...a))
+    options.fetch ?? ((input: string, init: RequestInit) => fetch(input, init))
   const currencies = normalizeScales({
     ...OPENRAILS_CURRENCY_SCALES,
     ...options.currencies,
