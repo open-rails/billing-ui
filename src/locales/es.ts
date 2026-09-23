@@ -47,6 +47,7 @@ export const es: BillingUiMessageBundle = {
     endedOn: "Finalizó el {date}",
     pastDue: "El pago falló. Actualiza tu tarjeta para mantener el acceso.",
     cancel: "Cancelar",
+    cancelLabel: "Cancelar {name}",
     resume: "Reanudar",
     resumed: "Tu suscripción continuará.",
     manageAtProvider: "Gestionar",

@@ -48,6 +48,7 @@ export const ja: BillingUiMessageBundle = {
     pastDue:
       "お支払いに失敗しました。引き続き利用するにはカードを更新してください。",
     cancel: "解約",
+    cancelLabel: "{name}を解約",
     resume: "再開",
     resumed: "サブスクリプションは継続されます。",
     manageAtProvider: "管理",

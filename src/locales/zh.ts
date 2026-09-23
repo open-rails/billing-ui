@@ -47,6 +47,7 @@ export const zh: BillingUiMessageBundle = {
     endedOn: "已于 {date} 结束",
     pastDue: "付款失败。请更新你的银行卡以保留访问权限。",
     cancel: "取消订阅",
+    cancelLabel: "取消 {name}",
     resume: "恢复",
     resumed: "你的订阅将继续。",
     manageAtProvider: "管理",

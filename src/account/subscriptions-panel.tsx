@@ -223,7 +223,7 @@ export function SubscriptionsPanel({
                     size="sm"
                     className="text-muted-foreground hover:text-destructive"
                     disabled={!!pending}
-                    aria-label={`${t("subscriptions.cancel")} ${name}`}
+                    aria-label={t("subscriptions.cancelLabel", { name })}
                     onClick={() => {
                       setRowError(null)
                       setCancelling(s)

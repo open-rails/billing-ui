@@ -47,6 +47,7 @@ export const ko: BillingUiMessageBundle = {
     endedOn: "{date}에 종료됨",
     pastDue: "결제에 실패했습니다. 계속 이용하려면 카드를 업데이트하세요.",
     cancel: "해지",
+    cancelLabel: "{name} 해지",
     resume: "재개",
     resumed: "구독이 계속됩니다.",
     manageAtProvider: "관리",

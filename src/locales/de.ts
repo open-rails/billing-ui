@@ -48,6 +48,7 @@ export const de: BillingUiMessageBundle = {
     pastDue:
       "Zahlung fehlgeschlagen. Aktualisiere deine Karte, um den Zugriff zu behalten.",
     cancel: "Kündigen",
+    cancelLabel: "{name} kündigen",
     resume: "Fortsetzen",
     resumed: "Dein Abonnement läuft weiter.",
     manageAtProvider: "Verwalten",

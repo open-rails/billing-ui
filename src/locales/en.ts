@@ -46,6 +46,7 @@ export const en = {
     endedOn: "Ended {date}",
     pastDue: "Payment failed. Update your card to keep access.",
     cancel: "Cancel",
+    cancelLabel: "Cancel {name}",
     resume: "Resume",
     resumed: "Your subscription will continue.",
     manageAtProvider: "Manage",
