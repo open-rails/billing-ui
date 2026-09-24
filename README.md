@@ -10,4 +10,4 @@ attaches `openrails-billing-ui-X.Y.Z.tgz`.
 pnpm add https://github.com/open-rails/openrails/releases/download/vX.Y.Z/openrails-billing-ui-X.Y.Z.tgz
 ```
 
-Tarballs from releases before v0.9.0 remain attached to this repository's releases.
+Tarballs up to v0.9.0 remain attached to this repository's releases.
